@@ -38,8 +38,9 @@ export const createProviderModelsService = (dependencies = {}) => {
     const resolveProvider = dependencies.resolveProvider ?? providerRegistry.resolveProvider;
     const catalog = dependencies.catalog ?? providerModelsDb;
     const sessions = dependencies.sessions ?? sessionsDb;
-    const getProviderModels = async (provider) => {
-        const predefined = await resolveProvider(provider).models.getSupportedModels();
+    const getProviderModels = async (provider, options = {}) => {
+        const providerAdapter = resolveProvider(provider);
+        const predefined = await providerAdapter.models.getSupportedModels(options);
         return mergeProviderModels(predefined, catalog.listCustomProviderModels(provider));
     };
     const getCurrentActiveModel = async (provider, sessionId) => resolveProvider(provider).models.getCurrentActiveModel(sessionId);

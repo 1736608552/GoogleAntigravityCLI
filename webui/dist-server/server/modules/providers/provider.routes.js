@@ -636,7 +636,8 @@ router.post('/antigravity/proxy/settings', asyncHandler(async (req, res) => {
 }));
 router.get('/:provider/models', asyncHandler(async (req, res) => {
     const provider = parseProvider(req.params.provider);
-    const models = await providerModelsService.getProviderModels(provider);
+    const force = req.query.force === 'true';
+    const models = await providerModelsService.getProviderModels(provider, { force });
     res.json(createApiSuccessResponse({ provider, models }));
 }));
 router.post('/:provider/models', asyncHandler(async (req, res) => {

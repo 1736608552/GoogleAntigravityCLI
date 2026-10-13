@@ -85,8 +85,12 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
   const catalog = dependencies.catalog ?? providerModelsDb;
   const sessions = dependencies.sessions ?? sessionsDb;
 
-  const getProviderModels = async (provider: LLMProvider): Promise<ProviderModelsDefinition> => {
-    const predefined = await resolveProvider(provider).models.getSupportedModels();
+  const getProviderModels = async (
+    provider: LLMProvider,
+    options: { force?: boolean } = {},
+  ): Promise<ProviderModelsDefinition> => {
+    const providerAdapter = resolveProvider(provider);
+    const predefined = await providerAdapter.models.getSupportedModels(options);
     return mergeProviderModels(predefined, catalog.listCustomProviderModels(provider));
   };
 

@@ -100,33 +100,33 @@ test('conversation search streams title matches before transcript results', asyn
 });
 test('reasoning effort is persisted and returned with the active session model', async () => {
     await withProviderServer(async (baseUrl, workspacePath) => {
-        sessionsDb.createAppSession('effort-session', 'codex', workspacePath);
-        const updateResponse = await fetch(`${baseUrl}/api/providers/codex/sessions/effort-session/active-effort`, {
+        sessionsDb.createAppSession('effort-session', 'antigravity', workspacePath);
+        const updateResponse = await fetch(`${baseUrl}/api/providers/antigravity/sessions/effort-session/active-effort`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ effort: 'ultra' }),
+            body: JSON.stringify({ effort: 'high' }),
         });
         const updatePayload = await updateResponse.json();
         assert.equal(updateResponse.status, 200);
-        assert.equal(updatePayload.data.effort, 'ultra');
-        assert.equal(sessionsDb.getSessionById('effort-session')?.effort, 'ultra');
-        const readResponse = await fetch(`${baseUrl}/api/providers/codex/sessions/effort-session/active-model`);
+        assert.equal(updatePayload.data.effort, 'high');
+        assert.equal(sessionsDb.getSessionById('effort-session')?.effort, 'high');
+        const readResponse = await fetch(`${baseUrl}/api/providers/antigravity/sessions/effort-session/active-model`);
         const readPayload = await readResponse.json();
         assert.equal(readResponse.status, 200);
         assert.equal(readPayload.data.sessionId, 'effort-session');
-        assert.equal(readPayload.data.effort, 'ultra');
+        assert.equal(readPayload.data.effort, 'high');
     });
 });
 test('model routes expose immutable defaults and full custom model CRUD', async () => {
     await withProviderServer(async (baseUrl) => {
-        const initialResponse = await fetch(`${baseUrl}/api/providers/codex/models`);
+        const initialResponse = await fetch(`${baseUrl}/api/providers/antigravity/models`);
         const initialPayload = await initialResponse.json();
         assert.equal(initialResponse.status, 200);
         assert.equal('cache' in initialPayload.data, false);
         const predefined = initialPayload.data.models.OPTIONS[0];
         assert.equal(predefined.isCustom, false);
         assert.equal(predefined.recordId, undefined);
-        const createResponse = await fetch(`${baseUrl}/api/providers/codex/models`, {
+        const createResponse = await fetch(`${baseUrl}/api/providers/antigravity/models`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ model: 'Gateway GPT', id: 'gateway/gpt' }),
@@ -135,7 +135,7 @@ test('model routes expose immutable defaults and full custom model CRUD', async 
         assert.equal(createResponse.status, 201);
         assert.equal(createPayload.data.model.isCustom, true);
         const customRecordId = createPayload.data.model.recordId;
-        const updateResponse = await fetch(`${baseUrl}/api/providers/codex/models/${customRecordId}`, {
+        const updateResponse = await fetch(`${baseUrl}/api/providers/antigravity/models/${customRecordId}`, {
             method: 'PATCH',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ model: 'Gateway GPT Updated', id: 'gateway/gpt-v2' }),
@@ -144,7 +144,7 @@ test('model routes expose immutable defaults and full custom model CRUD', async 
         assert.equal(updateResponse.status, 200);
         assert.equal(updatePayload.data.model.value, 'gateway/gpt-v2');
         assert.equal(updatePayload.data.model.label, 'Gateway GPT Updated');
-        const immutableResponse = await fetch(`${baseUrl}/api/providers/codex/models/999999`, {
+        const immutableResponse = await fetch(`${baseUrl}/api/providers/antigravity/models/999999`, {
             method: 'PATCH',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ model: 'Changed', id: 'changed' }),
@@ -152,7 +152,7 @@ test('model routes expose immutable defaults and full custom model CRUD', async 
         const immutablePayload = await immutableResponse.json();
         assert.equal(immutableResponse.status, 404);
         assert.equal(immutablePayload.error.code, 'MODEL_NOT_FOUND');
-        const deleteResponse = await fetch(`${baseUrl}/api/providers/codex/models/${customRecordId}`, { method: 'DELETE' });
+        const deleteResponse = await fetch(`${baseUrl}/api/providers/antigravity/models/${customRecordId}`, { method: 'DELETE' });
         const deletePayload = await deleteResponse.json();
         assert.equal(deleteResponse.status, 200);
         assert.equal(deletePayload.data.models.OPTIONS.some((option) => option.recordId === customRecordId), false);

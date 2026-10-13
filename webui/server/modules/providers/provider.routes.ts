@@ -829,7 +829,8 @@ router.get(
   '/:provider/models',
   asyncHandler(async (req: Request, res: Response) => {
     const provider = parseProvider(req.params.provider);
-    const models = await providerModelsService.getProviderModels(provider);
+    const force = req.query.force === 'true';
+    const models = await providerModelsService.getProviderModels(provider, { force });
     res.json(createApiSuccessResponse({ provider, models }));
   }),
 );

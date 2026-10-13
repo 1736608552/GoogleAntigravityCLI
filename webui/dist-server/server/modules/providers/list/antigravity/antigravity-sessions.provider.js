@@ -225,18 +225,20 @@ export class AntigravitySessionsProvider {
                         const label = mMatch[1].trim();
                         if (label.includes('3.8') && label.includes('Flash'))
                             detectedModel = 'gemini-3.8-flash';
-                        else if (label.includes('3.7') && label.includes('Flash'))
-                            detectedModel = 'gemini-3.7-flash';
-                        else if (label.includes('3.6') && label.includes('Flash'))
-                            detectedModel = 'gemini-3.6-flash';
-                        else if (label.includes('3.1') && label.includes('Pro'))
-                            detectedModel = 'gemini-3.1-pro';
                         else if (label.includes('Sonnet 4.6'))
                             detectedModel = 'claude-sonnet-4-6';
                         else if (label.includes('Opus 4.6'))
                             detectedModel = 'claude-opus-4-6-thinking';
                         else if (label.includes('120B'))
                             detectedModel = 'gpt-oss-120b-medium';
+                        else if (label.includes('Flash'))
+                            detectedModel = 'gemini-3.8-flash';
+                        else if (label.toLowerCase().includes('claude'))
+                            detectedModel = 'claude-sonnet-4-6';
+                        else if (label.toLowerCase().includes('gpt'))
+                            detectedModel = 'gpt-oss-120b-medium';
+                        else
+                            detectedModel = label.toLowerCase().replace(/[^a-z0-9.-]+/g, '-');
                         break;
                     }
                 }

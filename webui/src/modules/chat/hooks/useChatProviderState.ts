@@ -114,6 +114,31 @@ type SessionProviderSelection = {
   effort: string | null;
 };
 
+/**
+ * 规范化模型名称并提取内置的推理档位。
+ * 历史旧数据可能在本地存储中残留 gemini-3.8-flash-high/medium/low，
+ * 此处将其平滑规整为基础模型 gemini-3.8-flash，并提取对应 effort。
+ */
+export const normalizeModelWithEffort = (
+  rawModel: string | null | undefined,
+  targetProvider: LLMProvider,
+): { model: string | null; effort?: string } => {
+  if (!rawModel) {
+    return { model: null };
+  }
+  const trimmed = rawModel.trim();
+  if (targetProvider === 'antigravity') {
+    const match = trimmed.match(/^gemini-3\.8-flash-(high|medium|low)$/i);
+    if (match) {
+      return {
+        model: 'gemini-3.8-flash',
+        effort: match[1].toLowerCase(),
+      };
+    }
+  }
+  return { model: trimmed };
+};
+
 const getSessionSelectionKey = (provider: LLMProvider, sessionId: string): string => (
   `${provider}:${sessionId}`
 );
@@ -130,8 +155,15 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
   // that validates them arrives asynchronously per provider.
   const [providerModels, setProviderModels] = useState<Record<LLMProvider, string>>(() => {
     return PROVIDERS.reduce<Record<LLMProvider, string>>((acc, targetProvider) => {
-      acc[targetProvider] = localStorage.getItem(providerModelStorageKey(targetProvider))
-        || FALLBACK_DEFAULT_MODEL[targetProvider];
+      const stored = localStorage.getItem(providerModelStorageKey(targetProvider));
+      const normalized = normalizeModelWithEffort(stored, targetProvider);
+      if (normalized.effort && !localStorage.getItem(`${targetProvider}-effort`)) {
+        localStorage.setItem(`${targetProvider}-effort`, normalized.effort);
+      }
+      if (normalized.model && normalized.model !== stored) {
+        localStorage.setItem(providerModelStorageKey(targetProvider), normalized.model);
+      }
+      acc[targetProvider] = normalized.model || FALLBACK_DEFAULT_MODEL[targetProvider];
       return acc;
     }, {} as Record<LLMProvider, string>);
   });
@@ -284,13 +316,19 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     storageKey: string,
     current: string,
     def: ProviderModelsDefinition,
+    targetProvider: LLMProvider,
   ): string => {
     const stored = localStorage.getItem(storageKey);
-    if (stored && def.OPTIONS.some((o) => o.value === stored)) {
-      return stored;
+    const normalizedStored = normalizeModelWithEffort(stored, targetProvider);
+    if (normalizedStored.model && def.OPTIONS.some((o) => o.value === normalizedStored.model)) {
+      if (normalizedStored.effort && !localStorage.getItem(`${targetProvider}-effort`)) {
+        localStorage.setItem(`${targetProvider}-effort`, normalizedStored.effort);
+      }
+      return normalizedStored.model;
     }
-    if (current && def.OPTIONS.some((o) => o.value === current)) {
-      return current;
+    const normalizedCurrent = normalizeModelWithEffort(current, targetProvider);
+    if (normalizedCurrent.model && def.OPTIONS.some((o) => o.value === normalizedCurrent.model)) {
+      return normalizedCurrent.model;
     }
     return def.DEFAULT;
   };
@@ -364,7 +402,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
       const storageKey = providerModelStorageKey(targetProvider);
       const currentModel = providerModels[targetProvider];
-      const nextModel = pickStoredOrCurrent(storageKey, currentModel, catalog);
+      const nextModel = pickStoredOrCurrent(storageKey, currentModel, catalog, targetProvider);
 
       if (nextModel !== currentModel) {
         reconciledModels[targetProvider] = nextModel;
@@ -523,11 +561,14 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
         const rawEffort = body.data?.effort;
         const resolvedModel = typeof rawModel === 'string' ? rawModel.trim() : (rawModel ? String(rawModel).trim() : null);
         const resolvedEffort = typeof rawEffort === 'string' ? rawEffort.trim() : (rawEffort ? String(rawEffort).trim() : null);
+        const normalized = normalizeModelWithEffort(resolvedModel, targetProvider);
+        const finalModel = normalized.model;
+        const finalEffort = resolvedEffort || normalized.effort || null;
         setSessionSelection({
           provider: targetProvider,
           sessionId: selectedSessionId,
-          model: body.success && resolvedModel && body.data?.source !== 'default' ? resolvedModel : null,
-          effort: body.success ? resolvedEffort : null,
+          model: body.success && finalModel && body.data?.source !== 'default' ? finalModel : null,
+          effort: body.success ? finalEffort : null,
         });
       } catch (error) {
         if (
@@ -564,11 +605,16 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     model: string,
     sessionId?: string | null,
   ) => {
-    setStoredProviderModel(targetProvider, model);
+    const normalized = normalizeModelWithEffort(model, targetProvider);
+    const modelToUse = normalized.model || model;
+    if (normalized.effort) {
+      setStoredProviderEffort(targetProvider, normalized.effort);
+    }
+    setStoredProviderModel(targetProvider, modelToUse);
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
-      return { scope: 'default' as const, model };
+      return { scope: 'default' as const, model: modelToUse };
     }
 
     // A pending GET represents the state before this click and must not win
@@ -581,7 +627,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     const response = await api.providers.setSessionActiveModel(
       targetProvider,
       normalizedSessionId,
-      model,
+      modelToUse,
     );
 
     const body = (await response.json()) as SessionSelectionApiResponse;

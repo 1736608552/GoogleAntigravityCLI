@@ -98,7 +98,7 @@ export interface IProviderModels {
   /**
    * Returns the curated predefined catalog owned by this provider adapter.
    */
-  getSupportedModels(): Promise<ProviderModelsDefinition>;
+  getSupportedModels(options?: { force?: boolean }): Promise<ProviderModelsDefinition>;
 
   /**
    * Reads the model the provider itself believes one session is running with.

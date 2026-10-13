@@ -4,6 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { resolveAntigravityBinary, resolveAntigravityStateDir } from './antigravity-auth.provider.js';
+import { invalidateAntigravityModelCache } from './antigravity-models.provider.js';
 import { getProxyToggle, resolveAntigravityProxyEnv } from './antigravity-proxy.js';
 const activeLogins = new Map();
 const URL_REGEX = /https:\/\/accounts\.google\.com[^\s\x1b\x07\x00-\x1f'"]+/i;
@@ -851,6 +852,7 @@ class AntigravityAccountsService {
         this.saveAccounts(accounts);
         this.cachedQuotaSnapshot = null;
         this.quotaCacheTime = 0;
+        invalidateAntigravityModelCache();
         // Persist active account selection for CLI and 3100 sync
         const activeData = JSON.stringify({ email: target.email, updatedAt: Date.now() }, null, 2);
         const targetDirs = [
