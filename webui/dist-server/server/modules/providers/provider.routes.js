@@ -543,6 +543,12 @@ router.get('/antigravity/proxy/status', asyncHandler(async (_req, res) => {
     const { getProxyStatus } = await import('./list/antigravity/antigravity-proxy.js');
     res.json(createApiSuccessResponse(getProxyStatus()));
 }));
+router.get('/antigravity/proxy/urn-balance', asyncHandler(async (req, res) => {
+    const { fetchUrnBalanceDetails } = await import('./list/antigravity/antigravity-proxy.js');
+    const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    const balance = await fetchUrnBalanceDetails(forceRefresh);
+    res.json(createApiSuccessResponse(balance));
+}));
 router.get('/antigravity/proxy/locations', asyncHandler(async (_req, res) => {
     const { fetchBringYourLocations } = await import('./list/antigravity/bringyour-locations.js');
     const locations = await fetchBringYourLocations();

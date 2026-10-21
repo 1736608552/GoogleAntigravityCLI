@@ -21,6 +21,7 @@ import { api, readApiJson } from '@/shared/api';
 import { Badge, Button } from '@/shared/ui';
 import type { AntigravityAccount, AntigravityQuotaSnapshot } from '@/shared/types';
 import { formatDynamicCountdown } from '@/modules/chat/hooks/useAntigravityQuota';
+import { AntigravityUrnBalanceCard } from '@/modules/settings/tabs/agents-settings/sections/content/AntigravityUrnBalanceCard';
 
 type AntigravityProxySectionProps = {
   onNavigateToAccounts?: () => void;
@@ -717,6 +718,9 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
             </div>
           )}
         </div>
+
+        {/* BringYour Live Balance & Settlement Card */}
+        <AntigravityUrnBalanceCard />
 
         {/* Proxy Form Settings */}
         <div className={`space-y-3.5 pt-1 transition-opacity ${proxyEnabled ? 'opacity-100' : 'opacity-60'}`}>

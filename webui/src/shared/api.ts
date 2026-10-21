@@ -379,6 +379,13 @@ export const api = {
     antigravityQuotaSnapshot: (model?: string, force?: boolean, email?: string) =>
       get(`/api/providers/antigravity/quota/snapshot${query({ model, force, email })}`),
     getAntigravityProxyStatus: () => get('/api/providers/antigravity/proxy/status'),
+    getAntigravityUrnBalance: async (forceRefresh?: boolean) => {
+      try {
+        const res = await get(`/api/providers/antigravity/proxy/urn-balance${query({ refresh: forceRefresh ? 1 : undefined })}`);
+        if (res.ok) return res;
+      } catch (_) {}
+      return get(`/api/proxy/balance${query({ refresh: forceRefresh ? 1 : undefined })}`);
+    },
     getAntigravityProxyLocations: () => get('/api/providers/antigravity/proxy/locations'),
     restartAntigravityProxy: () => post('/api/providers/antigravity/proxy/restart'),
     sleepAntigravityProxy: () => post('/api/providers/antigravity/proxy/sleep'),

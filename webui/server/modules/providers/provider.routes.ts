@@ -715,6 +715,16 @@ router.get(
 );
 
 router.get(
+  '/antigravity/proxy/urn-balance',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { fetchUrnBalanceDetails } = await import('./list/antigravity/antigravity-proxy.js');
+    const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    const balance = await fetchUrnBalanceDetails(forceRefresh);
+    res.json(createApiSuccessResponse(balance));
+  }),
+);
+
+router.get(
   '/antigravity/proxy/locations',
   asyncHandler(async (_req: Request, res: Response) => {
     const { fetchBringYourLocations } = await import('./list/antigravity/bringyour-locations.js');

@@ -28,68 +28,9 @@ URNETWORK_SOCKS_LOG="$(pwd)/urnetwork/socks.log"
 URN_AUTH_FILE="$(pwd)/data/urn-auth.env"
 
 if [ -x "$URNETWORK_SOCKS" ]; then
-  # 方案一：保证 19999 代理始终打开、重启自动拉起、开机长驻不中断
-  # 仅当切换文件不存在时初始化为 yes，不强行覆盖用户选择
-  [ ! -f "$(pwd)/proxy-toggle.txt" ] && echo "yes" > "$(pwd)/proxy-toggle.txt" 2>/dev/null || true
-  echo "[socks] 方案一已启用：19999 代理开启长驻守护，开机与掉线自动自愈拉起…"
-
-  (
-    export LD_LIBRARY_PATH="$(pwd)/urnetwork"
-    while true; do
-      TOGGLE=$(cat "$(pwd)/proxy-toggle.txt" 2>/dev/null || echo "yes")
-      if [ "$TOGGLE" = "no" ] || [ "$TOGGLE" = "off" ] || [ "$TOGGLE" = "false" ]; then
-        if ss -tlnp 2>/dev/null | grep -q ":${URNETWORK_SOCKS_PORT} "; then
-          pkill -9 -f "urnetwork-socks" 2>/dev/null || true
-        fi
-        sleep 3
-        continue
-      fi
-
-      # Scale-to-Zero 空闲休眠感知：若系统已进入主动休眠，严禁自动拉起，彻底切断流量偷跑
-      if [ -f "/tmp/urn-sleeping.lock" ]; then
-        sleep 3
-        continue
-      fi
-
-      if ! ss -tlnp 2>/dev/null | grep -q ":${URNETWORK_SOCKS_PORT} "; then
-        # 自动自愈兜底：若凭据被写空或缺失，强制填回独立专用账号与密码
-        [ -f "$URN_AUTH_FILE" ] && source "$URN_AUTH_FILE" 2>/dev/null || true
-        if [ -z "${URN_USER_AUTH:-}" ] || [ -z "${URN_PASSWORD:-}" ]; then
-          export URN_USER_AUTH="q52694787@gmail.com"
-          export URN_PASSWORD="Xiaoliguang520."
-          cat << 'EOF' > "$URN_AUTH_FILE"
-# URnetwork SOCKS5 代理凭据（由系统设置面板写入，.gitignore 忽略不外传）
-URN_USER_AUTH="q52694787@gmail.com"
-URN_PASSWORD="Xiaoliguang520."
-URN_COUNTRY="United States"
-URN_REGION=""
-URN_CITY=""
-URN_PROVIDER_ID=""
-URN_STABLE="true"
-URN_PRIVACY="true"
-URN_QUANTUM="true"
-EOF
-        fi
-        echo "[socks] $(date '+%F %T'): 端口未监听，自动拉起 urnetwork-socks (country=${URN_COUNTRY:-United States})" >> "$URNETWORK_SOCKS_LOG"
-        "$URNETWORK_SOCKS" \
-          --user-auth="${URN_USER_AUTH}" \
-          --password="${URN_PASSWORD}" \
-          --addr="127.0.0.1:${URNETWORK_SOCKS_PORT}" \
-          --country="${URN_COUNTRY:-United States}" \
-          ${URN_REGION:+--region="$URN_REGION"} \
-          ${URN_CITY:+--city="$URN_CITY"} \
-          ${URN_PROVIDER_ID:+--provider-id="$URN_PROVIDER_ID"} >> "$URNETWORK_SOCKS_LOG" 2>&1 || true
-        sleep 2
-        if ! ss -tlnp 2>/dev/null | grep -q ":${URNETWORK_SOCKS_PORT} "; then
-          echo "[socks] $(date '+%F %T'): 启动未监听(可能触发上游频控429)，等待 20 秒后重试..." >> "$URNETWORK_SOCKS_LOG"
-          sleep 20
-        fi
-      else
-        sleep 2
-      fi
-    done
-  ) 200>&- &
-  echo "[socks] 方案一长驻守护进程已就绪 PID=$!"
+  # 代理生命周期严格由 WebUI Scale-to-Zero 智能调度器统一托管：
+  # 仅在设置处于代理状态且有活跃对话时按需瞬间拉起；对话结束 60 秒后自动优雅退出断开，向平台交割并回收质押流量
+  echo "[socks] SOCKS5 代理生命周期由 WebUI 现代化 Scale-to-Zero 调度器托管（按需唤醒 + 60s优雅回收）"
 fi
 
 echo "[keepalive] 准备启动现代化 Antigravity WebUI (端口 3100)..."

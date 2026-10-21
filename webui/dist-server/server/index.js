@@ -222,6 +222,12 @@ app.get('/api/proxy/status', async (_req, res) => {
     const { getProxyStatus } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
     res.json(getProxyStatus());
 });
+app.get('/api/proxy/balance', async (req, res) => {
+    const { fetchUrnBalanceDetails } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
+    const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    const balance = await fetchUrnBalanceDetails(forceRefresh);
+    res.json({ success: true, data: balance });
+});
 app.get('/api/proxy/locations', async (_req, res) => {
     const { fetchBringYourLocations } = await import('./modules/providers/list/antigravity/bringyour-locations.js');
     const locations = await fetchBringYourLocations();
