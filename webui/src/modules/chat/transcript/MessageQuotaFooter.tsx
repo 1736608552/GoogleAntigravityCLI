@@ -167,27 +167,21 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
 
   const h5DisplayTag = h5ResetTag;
 
-  // 进度条刻度与安全状态量化标记 (≥50% 安全区 / 20%~50% 预警区 / <20% 高危区)
+  // 3色物理分段进度条各段充盈比例 (红区: 0%~20% / 黄区: 20%~50% / 绿区: 50%~100%)
+  const redFill = Math.min(100, Math.max(0, (h5Pct / 20) * 100));
+  const amberFill = Math.min(100, Math.max(0, ((h5Pct - 20) / 30) * 100));
+  const greenFill = Math.min(100, Math.max(0, ((h5Pct - 50) / 50) * 100));
+
   const isSafeZone = h5Pct >= 50;
   const isWarningZone = h5Pct >= 20 && h5Pct < 50;
   const isDangerZone = h5Pct < 20;
 
   const zoneTag = isSafeZone ? '安全' : isWarningZone ? '注意' : '告急';
   const zoneTitle = isSafeZone
-    ? '🟢 算力安全区 (≥50%)：5小时持续回满，完全不伤周额度'
+    ? '🟢 安全绿区 (50%~100%)：5小时持续回满，完全不伤周额度'
     : isWarningZone
-    ? '🟡 适中预警区 (20%~50%)：消耗过半，请注意控制高频调用节奏'
-    : '🔴 周透支高危区 (<20%)：逼近周硬顶风控线，建议切换备用模型';
-
-  const barColorClass = isDangerZone
-    ? 'bg-gradient-to-r from-rose-600 to-red-500'
-    : isWarningZone
-    ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-    : isClaude
-    ? 'bg-gradient-to-r from-purple-500 to-violet-400'
-    : isGpt
-    ? 'bg-gradient-to-r from-blue-500 to-cyan-400'
-    : 'bg-gradient-to-r from-emerald-500 to-teal-400';
+    ? '🟡 警戒黄区 (20%~50%)：消耗过半，请注意控制高频调用节奏'
+    : '🔴 告急红区 (0%~20%)：逼近周硬顶风控线，建议切换备用模型';
 
   const weeklyPct = typeof poolWeekly?.percent === 'number' ? poolWeekly.percent : 100;
   const weeklyResetStr = formatDynamicCountdown(poolWeekly?.resetTime, poolWeekly?.resetsIn, false, weeklyPct);
@@ -299,26 +293,34 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
                 {isGemini ? 'Gemini 实时额度' : isGpt ? 'GPT 实时额度' : 'Claude 实时额度'}
               </span>
 
-              {/* 刻度进度条：带 50% 平衡分界与 20% 警戒刻度线标记 */}
+              {/* 3色物理分段进度条：0~20% 告急红区 / 20~50% 警戒黄区 / 50~100% 充裕绿区 */}
               <div
-                className="relative h-2 w-12 sm:w-16 shrink-0 overflow-hidden rounded-full bg-muted/80 border border-border/50"
-                title="刻度说明：中线为 50% 安全分界线；左侧红线为 20% 预警警戒线"
+                className="flex items-center gap-0.5 h-2 w-14 sm:w-20 shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                title={`3色分段刻度：红区(0%~20% 告急) / 黄区(20%~50% 警戒) / 绿区(50%~100% 充裕) · 当前剩余 ${h5Pct}%`}
               >
-                {/* 50% 安全分界刻度线 */}
-                <div
-                  className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-foreground/30 z-10"
-                  title="50% 分界线"
-                />
-                {/* 20% 预警警戒刻度线 */}
-                <div
-                  className="absolute top-0 bottom-0 left-[20%] w-[1px] bg-rose-500/60 z-10"
-                  title="20% 危险线"
-                />
-                {/* 实际动态填充进度条 */}
-                <div
-                  className={`h-full rounded-full transition-all duration-500 ${barColorClass}`}
-                  style={{ width: `${Math.max(4, Math.min(100, h5Pct))}%` }}
-                />
+                {/* 危险红段 (0%~20%，权重2) */}
+                <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden" title="危险段(0%~20%)">
+                  <div
+                    className="h-full bg-rose-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${redFill}%` }}
+                  />
+                </div>
+
+                {/* 预警黄段 (20%~50%，权重3) */}
+                <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden" title="预警段(20%~50%)">
+                  <div
+                    className="h-full bg-amber-400 transition-all duration-300 rounded-full"
+                    style={{ width: `${amberFill}%` }}
+                  />
+                </div>
+
+                {/* 安全绿段 (50%~100%，权重5) */}
+                <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden" title="安全段(50%~100%)">
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${greenFill}%` }}
+                  />
+                </div>
               </div>
 
               <span className={`font-mono font-semibold text-[10.5px] ${

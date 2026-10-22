@@ -551,6 +551,16 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
               ? quotaSnapshot
               : (curAcc?.quotaSnapshot || quotaSnapshot);
           if (!displaySnap) return null;
+          const geminiPct = displaySnap.gemini5h?.percent ?? 100;
+          const gRed = Math.min(100, Math.max(0, (geminiPct / 20) * 100));
+          const gAmber = Math.min(100, Math.max(0, ((geminiPct - 20) / 30) * 100));
+          const gGreen = Math.min(100, Math.max(0, ((geminiPct - 50) / 50) * 100));
+
+          const claudePct = displaySnap.claude5h?.percent ?? 100;
+          const cRed = Math.min(100, Math.max(0, (claudePct / 20) * 100));
+          const cAmber = Math.min(100, Math.max(0, ((claudePct - 20) / 30) * 100));
+          const cGreen = Math.min(100, Math.max(0, ((claudePct - 50) / 50) * 100));
+
           return (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
               <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-1.5">
@@ -558,37 +568,34 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
                   <span className="font-semibold text-emerald-600 dark:text-emerald-400">Gemini 官方实时额度</span>
                   <div className="flex items-center gap-1.5">
                     <span className={`px-1 py-0.2 rounded text-[9px] font-semibold leading-none ${
-                      (displaySnap.gemini5h?.percent ?? 100) >= 50
+                      geminiPct >= 50
                         ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                        : (displaySnap.gemini5h?.percent ?? 100) >= 20
+                        : geminiPct >= 20
                         ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                         : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
                     }`}>
-                      {(displaySnap.gemini5h?.percent ?? 100) >= 50 ? '安全' : (displaySnap.gemini5h?.percent ?? 100) >= 20 ? '注意' : '告急'}
+                      {geminiPct >= 50 ? '安全' : geminiPct >= 20 ? '注意' : '告急'}
                     </span>
-                    <span className={`font-bold font-mono text-xs ${(displaySnap.gemini5h?.percent != null && displaySnap.gemini5h.percent < 100) ? 'text-emerald-500 font-semibold' : 'text-foreground'}`}>
-                      {displaySnap.gemini5h?.percent ?? 100}%
+                    <span className={`font-bold font-mono text-xs ${geminiPct < 100 ? 'text-emerald-500 font-semibold' : 'text-foreground'}`}>
+                      {geminiPct}%
                     </span>
                   </div>
                 </div>
 
-                {/* 刻度进度条：中线 50% 安全分水岭 + 左线 20% 警戒红线 */}
+                {/* 3色物理分段进度条：红段 20% / 黄段 30% / 绿段 50% */}
                 <div
-                  className="relative h-2 w-full overflow-hidden rounded-full bg-muted/80 border border-border/50"
-                  title="刻度标记：中线为 50% 安全分界线；左侧红线为 20% 预警警戒线"
+                  className="flex items-center gap-1 h-2 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                  title={`3色分段刻度：红区(0%~20% 告急) / 黄区(20%~50% 警戒) / 绿区(50%~100% 充裕) · 当前剩余 ${geminiPct}%`}
                 >
-                  <div className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-foreground/30 z-10" title="50% 安全分界刻度" />
-                  <div className="absolute top-0 bottom-0 left-[20%] w-[1px] bg-rose-500/60 z-10" title="20% 警戒刻度" />
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      (displaySnap.gemini5h?.percent ?? 100) < 20
-                        ? 'bg-gradient-to-r from-rose-600 to-red-500'
-                        : (displaySnap.gemini5h?.percent ?? 100) < 50
-                        ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                        : 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                    }`}
-                    style={{ width: `${Math.max(4, Math.min(100, displaySnap.gemini5h?.percent ?? 100))}%` }}
-                  />
+                  <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden" title="危险段(0%~20%)">
+                    <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${gRed}%` }} />
+                  </div>
+                  <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden" title="预警段(20%~50%)">
+                    <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${gAmber}%` }} />
+                  </div>
+                  <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden" title="安全段(50%~100%)">
+                    <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${gGreen}%` }} />
+                  </div>
                 </div>
 
                 <div className="text-[10.5px] font-mono text-muted-foreground/85 truncate flex items-center justify-between">
@@ -602,37 +609,34 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
                   <span className="font-semibold text-purple-600 dark:text-purple-400">Claude / GPT 官方实时额度</span>
                   <div className="flex items-center gap-1.5">
                     <span className={`px-1 py-0.2 rounded text-[9px] font-semibold leading-none ${
-                      (displaySnap.claude5h?.percent ?? 100) >= 50
+                      claudePct >= 50
                         ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30'
-                        : (displaySnap.claude5h?.percent ?? 100) >= 20
+                        : claudePct >= 20
                         ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                         : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
                     }`}>
-                      {(displaySnap.claude5h?.percent ?? 100) >= 50 ? '安全' : (displaySnap.claude5h?.percent ?? 100) >= 20 ? '注意' : '告急'}
+                      {claudePct >= 50 ? '安全' : claudePct >= 20 ? '注意' : '告急'}
                     </span>
-                    <span className={`font-bold font-mono text-xs ${(displaySnap.claude5h?.percent != null && displaySnap.claude5h.percent < 100) ? 'text-purple-500 font-semibold' : 'text-foreground'}`}>
-                      {displaySnap.claude5h?.percent ?? 100}%
+                    <span className={`font-bold font-mono text-xs ${claudePct < 100 ? 'text-purple-500 font-semibold' : 'text-foreground'}`}>
+                      {claudePct}%
                     </span>
                   </div>
                 </div>
 
-                {/* 刻度进度条：中线 50% 安全分水岭 + 左线 20% 警戒红线 */}
+                {/* 3色物理分段进度条：红段 20% / 黄段 30% / 绿段 50% */}
                 <div
-                  className="relative h-2 w-full overflow-hidden rounded-full bg-muted/80 border border-border/50"
-                  title="刻度标记：中线为 50% 安全分界线；左侧红线为 20% 预警警戒线"
+                  className="flex items-center gap-1 h-2 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                  title={`3色分段刻度：红区(0%~20% 告急) / 黄区(20%~50% 警戒) / 绿区(50%~100% 充裕) · 当前剩余 ${claudePct}%`}
                 >
-                  <div className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-foreground/30 z-10" title="50% 安全分界刻度" />
-                  <div className="absolute top-0 bottom-0 left-[20%] w-[1px] bg-rose-500/60 z-10" title="20% 警戒刻度" />
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${
-                      (displaySnap.claude5h?.percent ?? 100) < 20
-                        ? 'bg-gradient-to-r from-rose-600 to-red-500'
-                        : (displaySnap.claude5h?.percent ?? 100) < 50
-                        ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                        : 'bg-gradient-to-r from-purple-500 to-violet-400'
-                    }`}
-                    style={{ width: `${Math.max(4, Math.min(100, displaySnap.claude5h?.percent ?? 100))}%` }}
-                  />
+                  <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden" title="危险段(0%~20%)">
+                    <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${cRed}%` }} />
+                  </div>
+                  <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden" title="预警段(20%~50%)">
+                    <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${cAmber}%` }} />
+                  </div>
+                  <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden" title="安全段(50%~100%)">
+                    <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${cGreen}%` }} />
+                  </div>
                 </div>
 
                 <div className="text-[10.5px] font-mono text-muted-foreground/85 truncate flex items-center justify-between">
