@@ -170,6 +170,7 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
       } catch (_) {}
 
       // 4. Fetch Google accounts
+      let fetchedActiveEmail: string | null = null;
       try {
         const accRes = await api.providers.antigravityAccounts();
         if (accRes.ok) {
@@ -177,14 +178,16 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
           const parsed = accData?.data || accData;
           if (Array.isArray(parsed?.accounts)) {
             setAccounts(parsed.accounts);
-            setActiveEmail(parsed.activeEmail || parsed.accounts[0]?.email || null);
+            fetchedActiveEmail = parsed.activeEmail || parsed.accounts[0]?.email || null;
+            setActiveEmail(fetchedActiveEmail);
           }
         }
       } catch (_) {}
 
       // 5. Fetch live quota
       try {
-        const qRes = await api.providers.antigravityQuota(false);
+        const emailToFetch = fetchedActiveEmail || undefined;
+        const qRes = await api.providers.antigravityQuota(false, emailToFetch);
         if (qRes.ok) {
           const qData = await readApiJson<any>(qRes);
           const snap = qData?.data || qData;
@@ -216,6 +219,10 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
         const data = await readApiJson<any>(res);
         if (data?.data?.ok || data?.ok) {
           setActiveEmail(email);
+          const matchedAcc = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+          if (matchedAcc?.quotaSnapshot) {
+            setQuotaSnapshot(matchedAcc.quotaSnapshot);
+          }
           setSuccessMsg(`已切换至账号：${email}`);
           setTimeout(() => setSuccessMsg(null), 3000);
           void handleRefreshLiveQuota(email);
@@ -536,50 +543,44 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
           </div>
         )}
 
-        {/* Quota Snapshots Mini Bar */}
-        {quotaSnapshot && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[11px]">
-            <div className="rounded-xl border border-border/50 bg-muted/20 p-2">
-              <div className="text-muted-foreground text-[10px] flex items-center justify-between">
-                <span>Gemini 5h</span>
-                <span className="font-bold text-foreground font-mono">{quotaSnapshot.gemini5h?.percent ?? 100}%</span>
+        {/* Quota Snapshots Mini Bar (纯实时模型配额直通) */}
+        {(() => {
+          const curAcc = accounts.find((a) => (a.email || '').toLowerCase() === (activeEmail || '').toLowerCase());
+          const displaySnap =
+            (quotaSnapshot?.accountEmail && activeEmail && quotaSnapshot.accountEmail.toLowerCase() === activeEmail.toLowerCase())
+              ? quotaSnapshot
+              : (curAcc?.quotaSnapshot || quotaSnapshot);
+          if (!displaySnap) return null;
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5">
+                <div className="text-muted-foreground text-[10px] flex items-center justify-between">
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">Gemini 官方实时额度</span>
+                  <span className={`font-bold font-mono text-xs ${displaySnap.gemini5h?.percent != null && displaySnap.gemini5h.percent < 100 ? 'text-emerald-500 font-semibold' : 'text-foreground'}`}>
+                    {displaySnap.gemini5h?.percent ?? 100}%
+                  </span>
+                </div>
+                <div className="text-[10.5px] font-mono text-muted-foreground/85 truncate mt-1 flex items-center justify-between">
+                  <span>下次重置倒计时:</span>
+                  <span className="font-semibold text-foreground">{formatDynamicCountdown(displaySnap.gemini5h?.resetTime)}</span>
+                </div>
               </div>
-              <div className="text-[10px] font-mono text-muted-foreground/80 truncate mt-0.5">
-                {formatDynamicCountdown(quotaSnapshot.gemini5h?.resetTime, quotaSnapshot.gemini5h?.resetsIn, true, quotaSnapshot.gemini5h?.percent)}
-              </div>
-            </div>
 
-            <div className="rounded-xl border border-border/50 bg-muted/20 p-2">
-              <div className="text-muted-foreground text-[10px] flex items-center justify-between">
-                <span>Gemini 周度</span>
-                <span className="font-bold text-foreground font-mono">{quotaSnapshot.geminiWeekly?.percent ?? 100}%</span>
-              </div>
-              <div className="text-[10px] font-mono text-muted-foreground/80 truncate mt-0.5">
-                {formatDynamicCountdown(quotaSnapshot.geminiWeekly?.resetTime, quotaSnapshot.geminiWeekly?.resetsIn, false, quotaSnapshot.geminiWeekly?.percent)}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border/50 bg-muted/20 p-2">
-              <div className="text-muted-foreground text-[10px] flex items-center justify-between">
-                <span>Claude 5h</span>
-                <span className="font-bold text-foreground font-mono">{quotaSnapshot.claude5h?.percent ?? 100}%</span>
-              </div>
-              <div className="text-[10px] font-mono text-muted-foreground/80 truncate mt-0.5">
-                {formatDynamicCountdown(quotaSnapshot.claude5h?.resetTime, quotaSnapshot.claude5h?.resetsIn, true, quotaSnapshot.claude5h?.percent)}
+              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5">
+                <div className="text-muted-foreground text-[10px] flex items-center justify-between">
+                  <span className="font-semibold text-purple-600 dark:text-purple-400">Claude / GPT 官方实时额度</span>
+                  <span className={`font-bold font-mono text-xs ${displaySnap.claude5h?.percent != null && displaySnap.claude5h.percent < 100 ? 'text-purple-500 font-semibold' : 'text-foreground'}`}>
+                    {displaySnap.claude5h?.percent ?? 100}%
+                  </span>
+                </div>
+                <div className="text-[10.5px] font-mono text-muted-foreground/85 truncate mt-1 flex items-center justify-between">
+                  <span>下次重置倒计时:</span>
+                  <span className="font-semibold text-foreground">{formatDynamicCountdown(displaySnap.claude5h?.resetTime)}</span>
+                </div>
               </div>
             </div>
-
-            <div className="rounded-xl border border-border/50 bg-muted/20 p-2">
-              <div className="text-muted-foreground text-[10px] flex items-center justify-between">
-                <span>Claude 周度</span>
-                <span className="font-bold text-foreground font-mono">{quotaSnapshot.claudeWeekly?.percent ?? 100}%</span>
-              </div>
-              <div className="text-[10px] font-mono text-muted-foreground/80 truncate mt-0.5">
-                {formatDynamicCountdown(quotaSnapshot.claudeWeekly?.resetTime, quotaSnapshot.claudeWeekly?.resetsIn, false, quotaSnapshot.claudeWeekly?.percent)}
-              </div>
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* 2. SOCKS5 Proxy Master Switch & Status Card */}

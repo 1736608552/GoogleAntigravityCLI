@@ -1208,8 +1208,10 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
             Math.max(1, Math.round(cleanAcc.length / 3.2));
         const tokens = Math.min(Math.max(rawTurnTokens, 200), 25000);
         const finalSessionId = capturedSessionId || sessionId || processKey;
-        // 🚀【核心优化】对话完成：立即按本次消耗 tokens 与模型权重执行高精度配额扣减
-        const fastQuota = antigravityAccountsService.deductLocalQuota(model, tokens) || antigravityAccountsService.getLiveQuotaCached();
+        // 对话完成：获取真实上游配额缓存并异步触发实时刷新，绝不在本地虚假扣减
+        const currentActiveEmail = antigravityAccountsService.getActiveEmail() || undefined;
+        const fastQuota = antigravityAccountsService.getLiveQuotaCached(currentActiveEmail);
+        void antigravityAccountsService.fetchLiveQuotaSummary(true, currentActiveEmail);
         const completeMessage = createCompleteMessage({
             provider: 'antigravity',
             sessionId: finalSessionId,
@@ -1236,7 +1238,7 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
         void (async () => {
             try {
                 const activeAccount = await antigravityAccountsService.getActiveAccount();
-                const targetEmail = activeAccount?.email || antigravityAccountsService.getActiveEmail() || undefined;
+                const targetEmail = currentActiveEmail || activeAccount?.email || antigravityAccountsService.getActiveEmail() || undefined;
                 const freshSnapshot = await antigravityAccountsService.fetchLiveQuotaSummary(true, targetEmail);
                 if (freshSnapshot) {
                     const snapshotWithModel = {
@@ -1307,7 +1309,8 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
                         const durationSec = Math.round((Date.now() - turnStartTime) / 100) / 10;
                         const cleanAcc = (accumulatedText || '').replace(/[\u200b\s]/g, '').trim();
                         const tokens = Math.min(Math.max(Math.round(cleanAcc.length / 3.2), 200), 25000);
-                        const fastQuota = antigravityAccountsService.deductLocalQuota(model, tokens) || antigravityAccountsService.getLiveQuotaCached();
+                        const fastQuota = antigravityAccountsService.getLiveQuotaCached();
+                        void antigravityAccountsService.fetchLiveQuotaSummary(true);
                         const completeMessage = createCompleteMessage({
                             provider: 'antigravity',
                             sessionId: finalSessionId,

@@ -288,6 +288,18 @@ export type AntigravityQuotaPool = {
   status: 'healthy' | 'warning' | 'danger';
 };
 
+/** 单个模型的实时配额详情（对齐 Google Cloud Code Client 与 AntigravityQuotaWatcher） */
+export type ModelQuotaItem = {
+  modelId: string;
+  displayName: string;
+  remainingFraction: number;
+  percent: number;
+  resetTime: string | null;
+  resetsIn: string;
+  isExhausted: boolean;
+  status: 'healthy' | 'warning' | 'danger';
+};
+
 export type AntigravityQuotaSnapshot = {
   gemini5h?: AntigravityQuotaPool;
   geminiWeekly?: AntigravityQuotaPool;
@@ -311,6 +323,8 @@ export type AntigravityQuotaSnapshot = {
   tierType?: string;
   tierBadge?: string;
   policyNote?: string;
+  projectId?: string;
+  models?: ModelQuotaItem[];
   metrics?: {
     totalConversations?: number;
     totalTurns?: number;

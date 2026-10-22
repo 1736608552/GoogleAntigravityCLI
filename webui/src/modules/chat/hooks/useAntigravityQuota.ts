@@ -30,79 +30,10 @@ function notifyListeners(quota: any) {
 export function formatDynamicCountdown(
   isoString?: string | null,
   fallbackText?: string,
-  is5h: boolean = false,
-  percent?: number
+  _is5h: boolean = false,
+  _percent?: number
 ): string {
-  const now = new Date();
-  const fiveHourMs = 5 * 3600 * 1000;
-  const currentBlockMs = now.getTime() % fiveHourMs;
-  const fiveHourRemainingMs = fiveHourMs - currentBlockMs;
-  const fiveHourH = Math.floor(fiveHourRemainingMs / (3600 * 1000));
-  const fiveHourM = Math.floor((fiveHourRemainingMs % (3600 * 1000)) / (60 * 1000));
-  const default5hText = `${fiveHourH}小时 ${fiveHourM}分钟`;
-
-  const utcDay = now.getUTCDay();
-  const utcHours = now.getUTCHours();
-  const daysUntilWeekly = utcDay === 0 ? 0 : (7 - utcDay);
-  const defaultWeeklyText = `${daysUntilWeekly}天 ${23 - utcHours}小时`;
-
-  const isFiveHourBucket = is5h || (fallbackText ? /5h|5小时|five\s*hour/i.test(fallbackText) : false);
-
-  // 1. Google 官方 description 正则提取（最高优先级：这是 Google 原生返回的具体刷新时间文本）
-  if (fallbackText) {
-    const desc = String(fallbackText).trim();
-    const mEnDays = desc.match(/refresh in\s+(\d+)\s+days?(?:,\s*(\d+)\s+hours?)?/i);
-    if (mEnDays) {
-      const d = mEnDays[1];
-      const h = mEnDays[2] || '0';
-      return `${d}天 ${h}小时`;
-    }
-    const mEnHours = desc.match(/refresh in\s+(\d+)\s+hours?(?:,\s*(\d+)\s+minutes?)?/i);
-    if (mEnHours) {
-      const h = mEnHours[1];
-      const m = mEnHours[2] || '0';
-      return `${h}小时 ${m}分钟`;
-    }
-    const mEnMins = desc.match(/refresh in\s+(\d+)\s+minutes?/i);
-    if (mEnMins) {
-      return `${mEnMins[1]}分钟`;
-    }
-    const mCnDays = desc.match(/(\d+)\s*天\s*(?:(\d+)\s*小时)?/);
-    if (mCnDays) {
-      const d = mCnDays[1];
-      const h = mCnDays[2] || '0';
-      return `${d}天 ${h}小时`;
-    }
-    const mCnHours = desc.match(/(\d+)\s*小时\s*(?:(\d+)\s*分钟)?/);
-    if (mCnHours) {
-      const h = mCnHours[1];
-      const m = mCnHours[2] || '0';
-      return `${h}小时 ${m}分钟`;
-    }
-  }
-
-  // 2. 5小时滚动算力桶（5h）专用计算：
-  // 核心机制：当额度为 100%（或未触发限流）时，Google 上游每次返回的 resetTime 都是 request_time + 5h。
-  // 若直接 diff 计算，会永远得出 4小时59分不动。此时按 Google 集群 5 小时 epoch 块（now % 5h）精确计算距离下个周期重置的倒计时！
-  // 当额度被真实消耗（percent < 99.9）且 Google 返回真实提前恢复时间时，精确计算真实差值。
-  if (isFiveHourBucket) {
-    const isFull = percent != null ? percent >= 99.9 : true;
-    if (isoString) {
-      const target = new Date(isoString).getTime();
-      if (!isNaN(target)) {
-        const diff = target - Date.now();
-        if (!isFull && diff > 60 * 1000 && diff < 4.75 * 3600 * 1000) {
-          const h = Math.floor(diff / (3600 * 1000));
-          const m = Math.floor((diff % (3600 * 1000)) / (60 * 1000));
-          if (h > 0) return `${h}小时 ${m}分钟`;
-          return `${m}分钟`;
-        }
-      }
-    }
-    return default5hText;
-  }
-
-  // 3. 周度旗舰配额（Weekly）计算：
+  // 100% 纯实时根据 Google 官方云端返回的时间戳计算，绝不使用任何本地模拟、取模或脑补
   if (isoString) {
     const target = new Date(isoString).getTime();
     if (!isNaN(target)) {
@@ -112,12 +43,11 @@ export function formatDynamicCountdown(
         const rem = diff % (24 * 3600 * 1000);
         const h = Math.floor(rem / (3600 * 1000));
         const m = Math.floor((rem % (3600 * 1000)) / (60 * 1000));
-        if (d > 0) return `${d}天 ${h}小时`;
-        if (h > 0) return `${h}小时 ${m}分钟`;
+        if (d > 0) return h > 0 ? `${d}天 ${h}小时` : `${d}天`;
+        if (h > 0) return m > 0 ? `${h}小时 ${m}分钟` : `${h}小时`;
         return `${m}分钟`;
-      } else if (diff > 0) {
-        return '即将重置';
       }
+      if (diff > 0) return '即将重置';
     }
   }
 
@@ -125,7 +55,7 @@ export function formatDynamicCountdown(
     return fallbackText;
   }
 
-  return defaultWeeklyText;
+  return '正常';
 }
 
 export function formatPreciseTimeTag(str?: string | null): string {
@@ -183,7 +113,8 @@ export function getCachedAccountQuota(email?: string | null): AntigravityQuotaSn
 export async function fetchAntigravityQuota(force = false, email?: string): Promise<AntigravityQuotaSnapshot | null> {
   const now = Date.now();
   const cached = email ? perAccountSnapshots.get(email.toLowerCase()) : cachedQuotaSnapshot;
-  if (!force && cached && now - lastFetchTime < 30000) {
+  // 10 秒轻度防抖，避免同一秒内并发击穿；但若指定账号无缓存或强制刷新，立刻穿透请求上游
+  if (!force && cached && now - lastFetchTime < 10000) {
     return cached;
   }
 
@@ -250,14 +181,14 @@ export function useAntigravityQuota(targetEmail?: string) {
 
   useEffect(() => {
     const cached = targetEmail ? perAccountSnapshots.get(targetEmail.toLowerCase()) : cachedQuotaSnapshot;
-    if (!cached || Date.now() - lastFetchTime > 60000) {
+    if (!cached || cached.percent >= 99.9 || Date.now() - lastFetchTime > 15000) {
       void refreshQuota(false, targetEmail);
     }
 
-    // Refresh every 60s
+    // Refresh every 30s
     const interval = setInterval(() => {
       void refreshQuota(false, targetEmail);
-    }, 60000);
+    }, 30000);
 
     return () => clearInterval(interval);
   }, [refreshQuota, targetEmail]);

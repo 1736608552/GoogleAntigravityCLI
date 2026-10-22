@@ -251,9 +251,10 @@ export class AntigravitySessionsProvider {
         if (lastAssistant) {
             try {
                 const { antigravityAccountsService } = await import('./antigravity-accounts.service.js');
-                const liveSnapshot = antigravityAccountsService.getLiveQuotaCached() ||
-                    (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false)) ||
-                    (await antigravityAccountsService.fetchLiveQuotaSummary());
+                const targetEmail = lastAssistant.quotaSnapshot?.accountEmail || antigravityAccountsService.getActiveEmail() || undefined;
+                const liveSnapshot = antigravityAccountsService.getLiveQuotaCached(targetEmail) ||
+                    (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false, targetEmail)) ||
+                    (await antigravityAccountsService.fetchLiveQuotaSummary(false, targetEmail));
                 const snapshotWithModel = liveSnapshot ? { ...liveSnapshot, model: detectedModel } : null;
                 if (snapshotWithModel) {
                     lastAssistant.quotaSnapshot = snapshotWithModel;

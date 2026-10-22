@@ -283,10 +283,11 @@ export class AntigravitySessionsProvider implements IProviderSessions {
     if (lastAssistant) {
       try {
         const { antigravityAccountsService } = await import('./antigravity-accounts.service.js');
+        const targetEmail = (lastAssistant as any).quotaSnapshot?.accountEmail || antigravityAccountsService.getActiveEmail() || undefined;
         const liveSnapshot =
-          antigravityAccountsService.getLiveQuotaCached() ||
-          (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false)) ||
-          (await antigravityAccountsService.fetchLiveQuotaSummary());
+          antigravityAccountsService.getLiveQuotaCached(targetEmail) ||
+          (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false, targetEmail)) ||
+          (await antigravityAccountsService.fetchLiveQuotaSummary(false, targetEmail));
 
         const snapshotWithModel = liveSnapshot ? { ...liveSnapshot, model: detectedModel } : null;
 
