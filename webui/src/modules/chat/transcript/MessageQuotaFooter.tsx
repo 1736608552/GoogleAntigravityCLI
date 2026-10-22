@@ -167,6 +167,28 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
 
   const h5DisplayTag = h5ResetTag;
 
+  // 进度条刻度与安全状态量化标记 (≥50% 安全区 / 20%~50% 预警区 / <20% 高危区)
+  const isSafeZone = h5Pct >= 50;
+  const isWarningZone = h5Pct >= 20 && h5Pct < 50;
+  const isDangerZone = h5Pct < 20;
+
+  const zoneTag = isSafeZone ? '安全' : isWarningZone ? '注意' : '告急';
+  const zoneTitle = isSafeZone
+    ? '🟢 算力安全区 (≥50%)：5小时持续回满，完全不伤周额度'
+    : isWarningZone
+    ? '🟡 适中预警区 (20%~50%)：消耗过半，请注意控制高频调用节奏'
+    : '🔴 周透支高危区 (<20%)：逼近周硬顶风控线，建议切换备用模型';
+
+  const barColorClass = isDangerZone
+    ? 'bg-gradient-to-r from-rose-600 to-red-500'
+    : isWarningZone
+    ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+    : isClaude
+    ? 'bg-gradient-to-r from-purple-500 to-violet-400'
+    : isGpt
+    ? 'bg-gradient-to-r from-blue-500 to-cyan-400'
+    : 'bg-gradient-to-r from-emerald-500 to-teal-400';
+
   const weeklyPct = typeof poolWeekly?.percent === 'number' ? poolWeekly.percent : 100;
   const weeklyResetStr = formatDynamicCountdown(poolWeekly?.resetTime, poolWeekly?.resetsIn, false, weeklyPct);
   const weeklyResetTag = formatPreciseTimeTag(weeklyResetStr);
@@ -251,12 +273,16 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
               void refreshQuota(true, displayEmail);
             }}
             className="flex flex-wrap cursor-pointer items-center gap-1.5 sm:gap-2 rounded-lg py-0.5 transition-all hover:opacity-90 active:scale-95"
-            title={`Google 云端实时配额: 剩余 ${h5Pct}% (${h5ResetStr ? `${h5ResetStr} 后重置` : '正常'})${displayEmail ? ` · 账号: ${displayEmail}` : ''} · 点击实时刷新`}
+            title={`${zoneTitle} · 实时额度: ${h5Pct}% (${h5ResetStr ? `${h5ResetStr} 恢复` : '正常'})${displayEmail ? ` · 账号: ${displayEmail}` : ''} · 点击实时刷新`}
           >
-            {/* 100% 真实模型配额胶囊 (对齐 AntigravityQuotaWatcher 原生标准，绝不生造虚假重复指标) */}
+            {/* 100% 真实模型配额胶囊 (带 50% 与 20% 刻度标记线) */}
             <div
               className={`inline-flex items-center gap-1 sm:gap-1.5 rounded-md px-2 py-0.5 text-[11px] whitespace-nowrap shrink-0 border ${
-                isClaude
+                isDangerZone
+                  ? 'border-rose-500/35 bg-rose-500/10 hover:border-rose-500/60'
+                  : isWarningZone
+                  ? 'border-amber-500/35 bg-amber-500/10 hover:border-amber-500/60'
+                  : isClaude
                   ? 'border-purple-500/25 bg-purple-500/5 hover:border-purple-500/50'
                   : isGpt
                   ? 'border-blue-500/25 bg-blue-500/5 hover:border-blue-500/50'
@@ -264,33 +290,60 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
               }`}
             >
               <span className={`text-[10.5px] font-medium whitespace-nowrap ${
-                isClaude ? 'text-purple-600 dark:text-purple-400' : isGpt ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'
+                isDangerZone
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : isWarningZone
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : isClaude ? 'text-purple-600 dark:text-purple-400' : isGpt ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'
               }`}>
                 {isGemini ? 'Gemini 实时额度' : isGpt ? 'GPT 实时额度' : 'Claude 实时额度'}
               </span>
-              <div className={`h-1.5 w-7 shrink-0 overflow-hidden rounded-full sm:w-8 ${
-                isClaude ? 'bg-purple-500/20' : isGpt ? 'bg-blue-500/20' : 'bg-emerald-500/20'
-              }`}>
+
+              {/* 刻度进度条：带 50% 平衡分界与 20% 警戒刻度线标记 */}
+              <div
+                className="relative h-2 w-12 sm:w-16 shrink-0 overflow-hidden rounded-full bg-muted/80 border border-border/50"
+                title="刻度说明：中线为 50% 安全分界线；左侧红线为 20% 预警警戒线"
+              >
+                {/* 50% 安全分界刻度线 */}
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    h5Pct <= 10
-                      ? 'bg-red-500'
-                      : isClaude
-                      ? 'bg-gradient-to-r from-purple-500 to-violet-400'
-                      : isGpt
-                      ? 'bg-gradient-to-r from-blue-500 to-cyan-400'
-                      : 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                  }`}
+                  className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-foreground/30 z-10"
+                  title="50% 分界线"
+                />
+                {/* 20% 预警警戒刻度线 */}
+                <div
+                  className="absolute top-0 bottom-0 left-[20%] w-[1px] bg-rose-500/60 z-10"
+                  title="20% 危险线"
+                />
+                {/* 实际动态填充进度条 */}
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${barColorClass}`}
                   style={{ width: `${Math.max(4, Math.min(100, h5Pct))}%` }}
                 />
               </div>
+
               <span className={`font-mono font-semibold text-[10.5px] ${
-                h5Pct < 100
+                isDangerZone
+                  ? 'text-rose-600 dark:text-rose-400 font-bold'
+                  : isWarningZone
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : h5Pct < 100
                   ? isClaude ? 'text-purple-600 dark:text-purple-400' : isGpt ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'
                   : 'text-foreground'
               }`}>
                 {h5Pct}%
               </span>
+
+              {/* 极简安全状态标记徽章 */}
+              <span className={`px-1 py-0.2 rounded text-[9px] font-semibold leading-none ${
+                isSafeZone
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                  : isWarningZone
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+              }`}>
+                {zoneTag}
+              </span>
+
               <span className="font-mono text-[9.5px] text-muted-foreground/75">({h5DisplayTag})</span>
             </div>
           </div>
