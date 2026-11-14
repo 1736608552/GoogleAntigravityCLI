@@ -279,29 +279,39 @@ export class AntigravitySessionsProvider implements IProviderSessions {
       detectedModel = 'gemini-3.8-flash';
     }
 
-    const lastAssistant = messages.slice().reverse().find(m => m.role === 'assistant' && m.kind === 'text');
-    if (lastAssistant) {
-      try {
-        const { antigravityAccountsService } = await import('./antigravity-accounts.service.js');
-        const targetEmail = (lastAssistant as any).quotaSnapshot?.accountEmail || antigravityAccountsService.getActiveEmail() || undefined;
-        const liveSnapshot =
-          antigravityAccountsService.getLiveQuotaCached(targetEmail) ||
-          (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false, targetEmail)) ||
-          (await antigravityAccountsService.fetchLiveQuotaSummary(false, targetEmail));
+    try {
+      const { antigravityAccountsService } = await import('./antigravity-accounts.service.js');
+      const targetEmail = antigravityAccountsService.getActiveEmail() || undefined;
+      const liveSnapshot =
+        antigravityAccountsService.getLiveQuotaCached(targetEmail) ||
+        (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false, targetEmail)) ||
+        (await antigravityAccountsService.fetchLiveQuotaSummary(false, targetEmail));
 
-        const snapshotWithModel = liveSnapshot ? { ...liveSnapshot, model: detectedModel } : null;
+      const snapshotWithModel = liveSnapshot ? { ...liveSnapshot, model: detectedModel } : null;
 
-        if (snapshotWithModel) {
-          (lastAssistant as any).quotaSnapshot = snapshotWithModel;
-          (lastAssistant as any).model = detectedModel;
-          (lastAssistant as any).meta = {
-            ...(lastAssistant as any).meta,
-            quotaSnapshot: snapshotWithModel,
-            model: detectedModel,
-          };
+      if (snapshotWithModel) {
+        for (const m of messages) {
+          if (m.role === 'assistant' && (m.kind === 'text' || !m.kind)) {
+            const rawSnap = (m as any).quotaSnapshot;
+            const isStale =
+              !rawSnap ||
+              !rawSnap.gemini5h ||
+              ((rawSnap.gemini5h.percent ?? 100) >= 99.9 &&
+                (String(rawSnap.gemini5h.resetsIn || '').includes('4h 59m') ||
+                  String(rawSnap.geminiWeekly?.resetsIn || '').includes('1天14h')));
+            if (isStale) {
+              (m as any).quotaSnapshot = snapshotWithModel;
+              (m as any).model = (m as any).model || detectedModel;
+              (m as any).meta = {
+                ...(m as any).meta,
+                quotaSnapshot: snapshotWithModel,
+                model: (m as any).model || detectedModel,
+              };
+            }
+          }
         }
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
 
     const { limit, offset } = options || {};
     const normalizedLimit = limit ?? null;

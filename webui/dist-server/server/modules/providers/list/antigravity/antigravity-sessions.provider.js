@@ -247,27 +247,36 @@ export class AntigravitySessionsProvider {
         if (!detectedModel) {
             detectedModel = 'gemini-3.8-flash';
         }
-        const lastAssistant = messages.slice().reverse().find(m => m.role === 'assistant' && m.kind === 'text');
-        if (lastAssistant) {
-            try {
-                const { antigravityAccountsService } = await import('./antigravity-accounts.service.js');
-                const targetEmail = lastAssistant.quotaSnapshot?.accountEmail || antigravityAccountsService.getActiveEmail() || undefined;
-                const liveSnapshot = antigravityAccountsService.getLiveQuotaCached(targetEmail) ||
-                    (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false, targetEmail)) ||
-                    (await antigravityAccountsService.fetchLiveQuotaSummary(false, targetEmail));
-                const snapshotWithModel = liveSnapshot ? { ...liveSnapshot, model: detectedModel } : null;
-                if (snapshotWithModel) {
-                    lastAssistant.quotaSnapshot = snapshotWithModel;
-                    lastAssistant.model = detectedModel;
-                    lastAssistant.meta = {
-                        ...lastAssistant.meta,
-                        quotaSnapshot: snapshotWithModel,
-                        model: detectedModel,
-                    };
+        try {
+            const { antigravityAccountsService } = await import('./antigravity-accounts.service.js');
+            const targetEmail = antigravityAccountsService.getActiveEmail() || undefined;
+            const liveSnapshot = antigravityAccountsService.getLiveQuotaCached(targetEmail) ||
+                (await antigravityAccountsService.getTurnQuotaSnapshot(detectedModel, undefined, undefined, false, targetEmail)) ||
+                (await antigravityAccountsService.fetchLiveQuotaSummary(false, targetEmail));
+            const snapshotWithModel = liveSnapshot ? { ...liveSnapshot, model: detectedModel } : null;
+            if (snapshotWithModel) {
+                for (const m of messages) {
+                    if (m.role === 'assistant' && (m.kind === 'text' || !m.kind)) {
+                        const rawSnap = m.quotaSnapshot;
+                        const isStale = !rawSnap ||
+                            !rawSnap.gemini5h ||
+                            ((rawSnap.gemini5h.percent ?? 100) >= 99.9 &&
+                                (String(rawSnap.gemini5h.resetsIn || '').includes('4h 59m') ||
+                                    String(rawSnap.geminiWeekly?.resetsIn || '').includes('1天14h')));
+                        if (isStale) {
+                            m.quotaSnapshot = snapshotWithModel;
+                            m.model = m.model || detectedModel;
+                            m.meta = {
+                                ...m.meta,
+                                quotaSnapshot: snapshotWithModel,
+                                model: m.model || detectedModel,
+                            };
+                        }
+                    }
                 }
             }
-            catch (_) { }
         }
+        catch (_) { }
         const { limit, offset } = options || {};
         const normalizedLimit = limit ?? null;
         const normalizedOffset = offset ?? 0;

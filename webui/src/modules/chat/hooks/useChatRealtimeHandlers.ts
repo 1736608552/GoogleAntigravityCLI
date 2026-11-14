@@ -241,6 +241,12 @@ export function useChatRealtimeHandlers({
           const snap = (msg as any).quotaSnapshot;
           if (snap) {
             updateCachedAntigravityQuota(snap);
+            if (sid) {
+              sessionStore.finalizeStreaming(sid, {
+                quotaSnapshot: snap,
+                meta: { ...(msg as any).meta, quotaSnapshot: snap },
+              });
+            }
           }
           break;
         }

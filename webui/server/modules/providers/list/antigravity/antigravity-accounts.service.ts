@@ -215,6 +215,23 @@ class AntigravityAccountsService {
     return false;
   }
 
+  private persistLsSession(address: string, csrfToken: string, time: number) {
+    const candidateDirs = [
+      '/vol1/@apphome/GoogleAntigravityCLI/data',
+      path.join(os.homedir(), '.gemini', 'antigravity-cli'),
+    ];
+    for (const d of candidateDirs) {
+      try {
+        if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+        fs.writeFileSync(
+          path.join(d, 'ls_session.json'),
+          JSON.stringify({ address, csrfToken, updatedAt: time }, null, 2),
+          'utf8'
+        );
+      } catch (_) {}
+    }
+  }
+
   private async getLanguageServerSession(force = false): Promise<{ address: string; csrfToken: string } | null> {
     const now = Date.now();
     if (!force && this.cachedLsSession && now - this.cachedLsSession.time < 30000) {
@@ -227,15 +244,17 @@ class AntigravityAccountsService {
     if (envAddr && envCsrf) {
       if (await this.probeLsSession(envAddr, envCsrf)) {
         this.cachedLsSession = { address: envAddr, csrfToken: envCsrf, time: now };
+        this.persistLsSession(envAddr, envCsrf, now);
         return { address: envAddr, csrfToken: envCsrf };
       }
     }
 
-    // 2. 尝试读取持久化会话文件
     const candidateFiles = [
       '/vol1/@apphome/GoogleAntigravityCLI/data/ls_session.json',
       path.join(os.homedir(), '.gemini', 'antigravity-cli', 'ls_session.json'),
     ];
+
+    // 2. 尝试读取持久化会话文件
     for (const f of candidateFiles) {
       try {
         if (fs.existsSync(f)) {
@@ -243,6 +262,7 @@ class AntigravityAccountsService {
           if (fileData?.address && fileData?.csrfToken) {
             if (await this.probeLsSession(fileData.address, fileData.csrfToken)) {
               this.cachedLsSession = { address: fileData.address, csrfToken: fileData.csrfToken, time: now };
+              this.persistLsSession(fileData.address, fileData.csrfToken, now);
               return { address: fileData.address, csrfToken: fileData.csrfToken };
             }
           }
@@ -250,7 +270,7 @@ class AntigravityAccountsService {
       } catch (_) {}
     }
 
-    // 3. 扫描 /proc 获取最新运行中的 antigravity 进程环境 (按 PID 逆序)
+    // 3. 扫描全系统进程环境获取活跃 antigravity / run_command 进程环境
     try {
       const pids = fs
         .readdirSync('/proc')
@@ -260,9 +280,8 @@ class AntigravityAccountsService {
 
       for (const pid of pids) {
         try {
-          const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
-          if (cmdline.includes('antigravity')) {
-            const envRaw = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+          const envRaw = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+          if (envRaw.includes('ANTIGRAVITY_LS_ADDRESS=') && envRaw.includes('ANTIGRAVITY_CSRF_TOKEN=')) {
             const envs = envRaw.split('\0');
             let addr = '';
             let csrf = '';
@@ -273,20 +292,80 @@ class AntigravityAccountsService {
             if (addr && csrf) {
               if (await this.probeLsSession(addr, csrf)) {
                 this.cachedLsSession = { address: addr, csrfToken: csrf, time: now };
-                try {
-                  const outDir = '/vol1/@apphome/GoogleAntigravityCLI/data';
-                  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-                  fs.writeFileSync(
-                    path.join(outDir, 'ls_session.json'),
-                    JSON.stringify({ address: addr, csrfToken: csrf, updatedAt: now }, null, 2),
-                    'utf8'
-                  );
-                } catch (_) {}
+                this.persistLsSession(addr, csrf, now);
                 return { address: addr, csrfToken: csrf };
               }
             }
           }
         } catch (_) {}
+      }
+    } catch (_) {}
+
+    // 4. 深度自愈：从最新 CLI 运行日志解析 HTTP 动态监听端口，并配合已知 Token 探测
+    try {
+      let candidateToken = '';
+      // 4.1 从全系统 /proc 扫描任意存在的 ANTIGRAVITY_CSRF_TOKEN
+      try {
+        const pids = fs.readdirSync('/proc').filter((p) => /^\d+$/.test(p));
+        for (const pid of pids) {
+          try {
+            const envRaw = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+            if (envRaw.includes('ANTIGRAVITY_CSRF_TOKEN=')) {
+              for (const line of envRaw.split('\0')) {
+                if (line.startsWith('ANTIGRAVITY_CSRF_TOKEN=')) {
+                  candidateToken = line.slice('ANTIGRAVITY_CSRF_TOKEN='.length);
+                  break;
+                }
+              }
+            }
+            if (candidateToken) break;
+          } catch (_) {}
+        }
+      } catch (_) {}
+
+      // 若未从进程找到 Token，从持久化文件拿取历史有效 Token
+      if (!candidateToken) {
+        for (const f of candidateFiles) {
+          try {
+            if (fs.existsSync(f)) {
+              const fileData = JSON.parse(fs.readFileSync(f, 'utf8'));
+              if (fileData?.csrfToken) {
+                candidateToken = fileData.csrfToken;
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 4.2 从最新的 cli-*.log 解析最新动态 HTTP 监听端口
+      let candidatePort = '';
+      try {
+        const logDir = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'log');
+        if (fs.existsSync(logDir)) {
+          const logFiles = fs
+            .readdirSync(logDir)
+            .filter((f) => f.startsWith('cli-') && f.endsWith('.log'))
+            .sort()
+            .reverse();
+          for (const lf of logFiles.slice(0, 3)) {
+            const content = fs.readFileSync(path.join(logDir, lf), 'utf8');
+            const m = content.match(/Language server listening on random port at (\d+) for HTTP/);
+            if (m && m[1]) {
+              candidatePort = m[1];
+              break;
+            }
+          }
+        }
+      } catch (_) {}
+
+      if (candidatePort && candidateToken) {
+        const fullAddr = `localhost:${candidatePort}`;
+        if (await this.probeLsSession(fullAddr, candidateToken)) {
+          this.cachedLsSession = { address: fullAddr, csrfToken: candidateToken, time: now };
+          this.persistLsSession(fullAddr, candidateToken, now);
+          return { address: fullAddr, csrfToken: candidateToken };
+        }
       }
     } catch (_) {}
 
@@ -695,6 +774,24 @@ class AntigravityAccountsService {
       }
 
       const accEmail = targetAccount?.email || this.getActiveEmail() || '';
+
+      // 🛡️【核心防污染屏障】：Google REST API (fetchAvailableModels) 不包含 5h 滚动算力桶（remainingFraction 恒为 1.0）。
+      // 若当前系统已有语言服务器拉取的原生真实双配额，严禁被 REST API 的假 100% 覆盖污染！
+      const existingRealSnapshot =
+        (accEmail ? this.accountQuotaSnapshots.get(accEmail.toLowerCase())?.snapshot : null) ||
+        this.cachedQuotaSnapshot ||
+        targetAccount?.quotaSnapshot;
+
+      const hasValidLsData =
+        existingRealSnapshot &&
+        existingRealSnapshot.gemini5h &&
+        (existingRealSnapshot.gemini5h.percent < 99.9 ||
+          (existingRealSnapshot.geminiWeekly?.percent ?? 100) < 99.9 ||
+          (existingRealSnapshot.gemini5h.resetTime && existingRealSnapshot.gemini5h.resetsIn !== '随时可用'));
+
+      if (hasValidLsData) {
+        return this.refreshSnapshotCountdowns(existingRealSnapshot);
+      }
 
       if (modelsData && modelsData.models) {
         const snapshot = this.buildQuotaSnapshotFromModels(modelsData.models, projectInfo, accEmail);

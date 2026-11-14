@@ -1,7 +1,7 @@
 import React, { memo, useState, useMemo, useEffect } from 'react';
 import { Zap, Sparkles, Bot, RefreshCw, User } from 'lucide-react';
 import type { ChatMessage, AntigravityQuotaSnapshot, LLMProvider } from '@/shared/types';
-import { useAntigravityQuota, formatDynamicCountdown } from '@/modules/chat/hooks/useAntigravityQuota';
+import { useAntigravityQuota, formatDynamicCountdown, getCachedAccountQuota } from '@/modules/chat/hooks/useAntigravityQuota';
 
 export function formatPreciseTimeTag(str?: string | null): string {
   if (!str) return '即将重置';
@@ -102,8 +102,8 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
     return () => clearInterval(timer);
   }, []);
 
-  // 1. Resolve quota snapshot: message snapshot first, then fallback to liveQuota
-  const rawLive = liveQuota as any;
+  // 1. Resolve quota snapshot: instant fallback to module-level cachedQuotaSnapshot, then liveQuota
+  const rawLive = (liveQuota || getCachedAccountQuota(targetEmail)) as any;
   const actualLiveQuota: AntigravityQuotaSnapshot | null =
     rawLive && typeof rawLive === 'object' && 'data' in rawLive && rawLive.data
       ? rawLive.data
@@ -148,15 +148,23 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
   // 4. Resolve strictly separated pool metrics:
   // Gemini model -> ONLY Gemini pools (Gemini 5h + Gemini 周度)
   // Third-party model (Claude / GPT) -> ONLY Third-party pools (Claude 5h + Claude 周度)
-  // 核心原则：100% 优先实时 Live Quota；若尚未加载完成才降级采用消息历史快照
+  // 核心原则：100% 优先实时 Live Quota；若历史快照为 100% 且存在有效 Live 数据，严禁回退假 100%
   const livePool5h = isGemini ? actualLiveQuota?.gemini5h : actualLiveQuota?.claude5h;
   const livePoolWeekly = isGemini ? actualLiveQuota?.geminiWeekly : actualLiveQuota?.claudeWeekly;
 
   const snapPool5h = isGemini ? actualSnap?.gemini5h : actualSnap?.claude5h;
   const snapPoolWeekly = isGemini ? actualSnap?.geminiWeekly : actualSnap?.claudeWeekly;
 
-  const pool5h = livePool5h || snapPool5h;
-  const poolWeekly = livePoolWeekly || snapPoolWeekly;
+  const isSnap5hStale = (snapPool5h?.percent ?? 100) >= 99.9 && String(snapPool5h?.resetsIn || '').includes('4h 59m');
+  const isSnapWeeklyStale = (snapPoolWeekly?.percent ?? 100) >= 99.9 && String(snapPoolWeekly?.resetsIn || '').includes('1天14h');
+
+  const pool5h = (!isSnap5hStale && snapPool5h && typeof snapPool5h.percent === 'number' && snapPool5h.percent < 100)
+    ? snapPool5h
+    : (livePool5h || snapPool5h);
+
+  const poolWeekly = (!isSnapWeeklyStale && snapPoolWeekly && typeof snapPoolWeekly.percent === 'number' && snapPoolWeekly.percent < 100)
+    ? snapPoolWeekly
+    : (livePoolWeekly || snapPoolWeekly);
 
   const h5Pct = typeof pool5h?.percent === 'number'
     ? pool5h.percent

@@ -1537,10 +1537,16 @@ export async function spawnAntigravity(
     const tokens = Math.min(Math.max(rawTurnTokens, 200), 25000);
     const finalSessionId = capturedSessionId || sessionId || processKey;
 
-    // 对话完成：获取真实上游配额缓存并异步触发实时刷新，绝不在本地虚假扣减
+    // 对话完成：获取真实上游配额缓存，保证向前端派发的消息快照 100% 为鲜活原生双配额
     const currentActiveEmail = antigravityAccountsService.getActiveEmail() || undefined;
-    const fastQuota = antigravityAccountsService.getLiveQuotaCached(currentActiveEmail);
-    void antigravityAccountsService.fetchLiveQuotaSummary(true, currentActiveEmail);
+    let fastQuota = antigravityAccountsService.getLiveQuotaCached(currentActiveEmail);
+    if (!fastQuota || (fastQuota.gemini5h && fastQuota.gemini5h.percent >= 99.9)) {
+      try {
+        fastQuota = (await antigravityAccountsService.fetchLiveQuotaSummary(true, currentActiveEmail)) || fastQuota;
+      } catch (_) {}
+    } else {
+      void antigravityAccountsService.fetchLiveQuotaSummary(true, currentActiveEmail);
+    }
     const completeMessage = createCompleteMessage({
       provider: 'antigravity',
       sessionId: finalSessionId,
