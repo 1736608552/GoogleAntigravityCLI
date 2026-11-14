@@ -231,11 +231,25 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
       if (res.ok) {
         const data = await readApiJson<any>(res);
         if (data?.data?.ok || data?.ok) {
+          const switchedAcc = data?.data?.account || data?.account;
           setActiveEmail(email);
-          const matchedAcc = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
-          if (matchedAcc?.quotaSnapshot) {
-            setQuotaSnapshot(matchedAcc.quotaSnapshot);
+          if (switchedAcc?.quotaSnapshot) {
+            setQuotaSnapshot(switchedAcc.quotaSnapshot);
+          } else {
+            setQuotaSnapshot(null);
           }
+          // 重新拉取整个 accounts 列表，更新全部账号卡片与激活状态
+          try {
+            const accRes = await api.providers.antigravityAccounts();
+            if (accRes.ok) {
+              const accData = await readApiJson<any>(accRes);
+              const parsed = accData?.data || accData;
+              if (Array.isArray(parsed?.accounts)) {
+                setAccounts(parsed.accounts);
+              }
+            }
+          } catch (_) {}
+
           setSuccessMsg(`已切换至账号：${email}`);
           setTimeout(() => setSuccessMsg(null), 3000);
           void handleRefreshLiveQuota(email);

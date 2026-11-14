@@ -322,7 +322,12 @@ class AntigravityAccountsService {
             const isPro = !!(planInfo?.isPro || /pro/i.test(planInfo?.planName || ''));
             const tierName = planInfo?.planName || (isPro ? 'Google AI Pro' : 'Google AI 标准版');
             const tierBadge = isPro ? 'PRO' : 'FREE';
-            const email = (targetEmail || userStatus?.email || this.getActiveEmail() || 'current-user').toLowerCase();
+            const lsUserEmail = (userStatus?.email || '').toLowerCase();
+            // 🛡️【账号身份隔离防串线】：若明确请求了特定账号且语言服务器当前认证账号与目标账号不一致，绝不能将本快照冒充给目标账号
+            if (targetEmail && lsUserEmail && targetEmail.toLowerCase() !== lsUserEmail) {
+                return null;
+            }
+            const email = lsUserEmail || (targetEmail || this.getActiveEmail() || 'current-user').toLowerCase();
             const accounts = this.loadAccounts();
             const targetAcc = accounts.find((a) => a.email.toLowerCase() === email);
             let totalConversations = 0;
@@ -1276,6 +1281,7 @@ class AntigravityAccountsService {
             this.writeActiveToken(tokenData);
         }
         this.saveAccounts(accounts);
+        this.cachedLsSession = null;
         this.cachedQuotaSnapshot = target.quotaSnapshot || null;
         this.quotaCacheTime = target.lastQuotaFetchedAt || 0;
         invalidateAntigravityModelCache();
@@ -1292,7 +1298,14 @@ class AntigravityAccountsService {
             }
             catch (_) { }
         }
-        void this.fetchLiveQuotaSummary(true, target.email);
+        try {
+            const fresh = await this.fetchLiveQuotaSummary(true, target.email);
+            if (fresh) {
+                target.quotaSnapshot = fresh;
+                this.cachedQuotaSnapshot = fresh;
+            }
+        }
+        catch (_) { }
         return { ok: true, activeEmail: target.email, account: target };
     }
     async addAccount(label, tokenData) {

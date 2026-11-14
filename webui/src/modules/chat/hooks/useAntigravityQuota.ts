@@ -106,6 +106,10 @@ export function getCachedAccountQuota(email?: string | null): AntigravityQuotaSn
   if (email) {
     const found = perAccountSnapshots.get(email.toLowerCase());
     if (found) return found;
+    if (cachedQuotaSnapshot?.accountEmail && cachedQuotaSnapshot.accountEmail.toLowerCase() === email.toLowerCase()) {
+      return cachedQuotaSnapshot;
+    }
+    return null;
   }
   return cachedQuotaSnapshot;
 }
@@ -148,6 +152,10 @@ export function useAntigravityQuota(targetEmail?: string) {
     if (targetEmail) {
       const perAcc = perAccountSnapshots.get(targetEmail.toLowerCase());
       if (perAcc) return perAcc;
+      if (cachedQuotaSnapshot?.accountEmail && cachedQuotaSnapshot.accountEmail.toLowerCase() === targetEmail.toLowerCase()) {
+        return unwrapQuotaSnapshot(cachedQuotaSnapshot);
+      }
+      return null;
     }
     return unwrapQuotaSnapshot(cachedQuotaSnapshot);
   });
