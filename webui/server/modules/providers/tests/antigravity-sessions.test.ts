@@ -215,3 +215,38 @@ test('AntigravitySessionsProvider: strips ADDITIONAL_METADATA and USER_SETTINGS_
     }
   });
 });
+
+test('deleteOrArchiveSessionById: seamlessly aborts and cleans up Antigravity session processes', async () => {
+  await withIsolatedDatabase(async () => {
+    const { sessionsService } = await import('@/modules/providers/services/sessions.service.js');
+    const { antigravityRuntime } = await import('@/modules/providers/list/antigravity/antigravity-runtime.provider.js');
+
+    const appSessionId = 'test-app-session-uuid-1';
+    const providerSessionId = '04c253f6-test-uuid-antigravity';
+
+    sessionsDb.createSession(
+      appSessionId,
+      'antigravity',
+      '/vol1/test',
+      'Test Antigravity Session',
+      undefined,
+      undefined,
+      null
+    );
+    sessionsDb.assignProviderSessionId(appSessionId, providerSessionId);
+
+    // 验证调用 abort 接口时对于不存在或已退出的进程安全幂等处理
+    const abortResult = antigravityRuntime.abort(providerSessionId);
+    assert.equal(typeof abortResult, 'boolean');
+
+    // 执行彻底删除会话
+    const deleteResult = await sessionsService.deleteOrArchiveSessionById(appSessionId, {
+      force: true,
+      deletedFromDisk: false,
+    });
+
+    assert.equal(deleteResult.sessionId, appSessionId);
+    assert.equal(deleteResult.action, 'deleted');
+    assert.equal(sessionsDb.getSessionById(appSessionId), null);
+  });
+});

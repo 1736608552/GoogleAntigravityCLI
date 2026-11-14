@@ -181,7 +181,7 @@ export function useAntigravityQuota(targetEmail?: string) {
 
   useEffect(() => {
     const cached = targetEmail ? perAccountSnapshots.get(targetEmail.toLowerCase()) : cachedQuotaSnapshot;
-    if (!cached || cached.percent >= 99.9 || Date.now() - lastFetchTime > 15000) {
+    if (!cached || (cached.percent ?? 0) >= 99.9 || Date.now() - lastFetchTime > 15000) {
       void refreshQuota(false, targetEmail);
     }
 

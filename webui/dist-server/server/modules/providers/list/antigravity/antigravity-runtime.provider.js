@@ -14,6 +14,154 @@ export { localizeEnglishThought, humanizeAntigravityError };
 const spawnFunction = crossSpawn;
 const activeAntigravityProcesses = new Map();
 const activeAbortControllers = new Map();
+const managedProcesses = new Set();
+const processKeyIndex = new Map();
+/**
+ * 终结 Antigravity 子进程及其所有派生子进程树（Linux /proc 级联强杀）
+ */
+function terminateAntigravityProcess(proc, forceImmediately = false) {
+    if (!proc || proc.killed || proc.exitCode !== null)
+        return;
+    const pid = proc.pid;
+    if (!pid)
+        return;
+    const killEntireTree = (sig) => {
+        try {
+            process.kill(-pid, sig);
+        }
+        catch (_) { }
+        try {
+            proc.kill(sig);
+        }
+        catch (_) { }
+        if (process.platform === 'linux') {
+            try {
+                for (const entry of fs.readdirSync('/proc')) {
+                    if (!/^\d+$/.test(entry))
+                        continue;
+                    const childPid = Number(entry);
+                    if (childPid === pid || childPid === process.pid)
+                        continue;
+                    try {
+                        const rawStat = fs.readFileSync(`/proc/${childPid}/stat`, 'utf8');
+                        const statParts = rawStat.substring(rawStat.lastIndexOf(')') + 2).split(' ');
+                        const childPpid = Number(statParts[1]);
+                        if (childPpid === pid) {
+                            try {
+                                process.kill(childPid, sig);
+                            }
+                            catch (_) { }
+                        }
+                    }
+                    catch (_) { }
+                }
+            }
+            catch (_) { }
+        }
+    };
+    if (forceImmediately) {
+        killEntireTree('SIGKILL');
+    }
+    else {
+        killEntireTree('SIGTERM');
+        const timer = setTimeout(() => {
+            if (proc.exitCode === null && !proc.killed) {
+                killEntireTree('SIGKILL');
+            }
+        }, 400);
+        timer.unref();
+    }
+}
+/**
+ * 注册受管 Antigravity 进程，并自动监听 exit/close 事件在真正退出后释放
+ */
+function registerManagedProcess(initialKeys, proc) {
+    let managed;
+    for (const m of managedProcesses) {
+        if (m.proc === proc || (proc.pid && m.proc.pid === proc.pid)) {
+            managed = m;
+            break;
+        }
+    }
+    if (!managed) {
+        managed = {
+            proc,
+            keys: new Set(initialKeys.filter(Boolean)),
+            spawnedAt: Date.now(),
+        };
+        managedProcesses.add(managed);
+        const onExit = () => {
+            if (!managed)
+                return;
+            for (const k of managed.keys) {
+                processKeyIndex.delete(k);
+                activeAntigravityProcesses.delete(k);
+            }
+            managedProcesses.delete(managed);
+        };
+        proc.once('exit', onExit);
+        proc.once('close', onExit);
+    }
+    else {
+        for (const k of initialKeys.filter(Boolean)) {
+            managed.keys.add(k);
+        }
+    }
+    for (const k of managed.keys) {
+        processKeyIndex.set(k, managed);
+        activeAntigravityProcesses.set(k, proc);
+    }
+    return managed;
+}
+/**
+ * 将新的会话识别 ID（如真实 conversation_id）动态绑定到已有的受管活跃进程
+ */
+function bindSessionKeyToProcess(key, proc) {
+    if (!key)
+        return;
+    if (proc) {
+        registerManagedProcess([key], proc);
+        return;
+    }
+    for (const managed of managedProcesses) {
+        if (!managed.proc.killed && managed.proc.exitCode === null) {
+            managed.keys.add(key);
+            processKeyIndex.set(key, managed);
+            activeAntigravityProcesses.set(key, managed.proc);
+        }
+    }
+}
+/**
+ * 根据任意 key（sessionId、conversationId、processKey 等）强力终止匹配的后台 Antigravity 进程
+ */
+function abortAntigravityProcessesByKey(key) {
+    if (!key)
+        return false;
+    let terminated = false;
+    const controller = activeAbortControllers.get(key);
+    if (controller) {
+        controller.abort();
+        activeAbortControllers.delete(key);
+        terminated = true;
+    }
+    const managed = processKeyIndex.get(key);
+    if (managed) {
+        terminateAntigravityProcess(managed.proc, true);
+        for (const k of managed.keys) {
+            processKeyIndex.delete(k);
+            activeAntigravityProcesses.delete(k);
+        }
+        managedProcesses.delete(managed);
+        terminated = true;
+    }
+    const legacyProc = activeAntigravityProcesses.get(key);
+    if (legacyProc && !legacyProc.killed && legacyProc.exitCode === null) {
+        terminateAntigravityProcess(legacyProc, true);
+        activeAntigravityProcesses.delete(key);
+        terminated = true;
+    }
+    return terminated;
+}
 let lastProxyRestartTime = 0;
 /**
  * Kills Antigravity CLI processes left over from a previous server lifecycle.
@@ -302,18 +450,28 @@ function runAntigravityTurnOnce(params) {
             ...process.env,
             HOME: process.env.AGY_HOME || process.env.HOME,
         });
-        // 关键自愈优化：单会话单实例保障，启动新轮次前先强制终结同 conversation 的历史残留孤儿进程
-        const targetConvId = capturedSessionId;
-        if (targetConvId) {
+        // 关键自愈优化：单会话单实例保障，启动新轮次前先强制终结同会话的历史残留孤儿进程
+        const targetCandidateKeys = [capturedSessionId, currentSessionKey].filter(Boolean);
+        for (const key of targetCandidateKeys) {
             try {
-                const oldProc = activeAntigravityProcesses.get(targetConvId);
-                if (oldProc && !oldProc.killed) {
+                const managed = processKeyIndex.get(key);
+                if (managed && !managed.proc.killed && managed.proc.exitCode === null) {
+                    terminateAntigravityProcess(managed.proc, true);
+                }
+                const oldProc = activeAntigravityProcesses.get(key);
+                if (oldProc && !oldProc.killed && oldProc.exitCode === null) {
+                    terminateAntigravityProcess(oldProc, true);
+                }
+                if (key.length > 5) {
                     try {
-                        oldProc.kill('SIGTERM');
+                        execFileSync('pkill', ['-9', '-f', '--', `conversation ${key}`]);
+                    }
+                    catch (_) { }
+                    try {
+                        execFileSync('pkill', ['-9', '-f', '--', `--conversation ${key}`]);
                     }
                     catch (_) { }
                 }
-                execFileSync('pkill', ['-9', '-f', `conversation ${targetConvId}`]);
             }
             catch (_) { }
         }
@@ -853,6 +1011,7 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
     let accumulatedText = '';
     let terminalNotificationSent = false;
     const turnStartTime = Date.now();
+    let currentTurnProc;
     const abortController = new AbortController();
     activeAbortControllers.set(processKey, abortController);
     if (sessionId && sessionId !== processKey) {
@@ -871,6 +1030,13 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
         capturedSessionId = nextSessionId;
         if (ws.setSessionId && typeof ws.setSessionId === 'function') {
             ws.setSessionId(capturedSessionId);
+        }
+        // 动态将捕获到的 conversationId 绑定到当前受管进程
+        if (currentTurnProc) {
+            bindSessionKeyToProcess(capturedSessionId, currentTurnProc);
+        }
+        else {
+            bindSessionKeyToProcess(capturedSessionId);
         }
         if (!providerSessionId && !sessionCreatedSent) {
             sessionCreatedSent = true;
@@ -906,16 +1072,17 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
         });
     };
     const cleanupProcessTracking = () => {
+        // 仅清理单轮次的局部 abortController
         activeAbortControllers.delete(processKey);
-        activeAntigravityProcesses.delete(processKey);
         if (sessionId) {
             activeAbortControllers.delete(sessionId);
-            activeAntigravityProcesses.delete(sessionId);
         }
         if (capturedSessionId) {
             activeAbortControllers.delete(capturedSessionId);
-            activeAntigravityProcesses.delete(capturedSessionId);
         }
+        // 核心根治：严禁在此处 delete activeAntigravityProcesses 或 processKeyIndex！
+        // 存活中的 ChildProcess 必须由 ManagedProcessRegistry 持续持有，
+        // 直至进程自身 exit、或用户在前端删除会话时调用 abort 精准销毁！
     };
     const MAX_RETRIES = 6;
     const EOF_EXTRA_RETRIES = 3;
@@ -962,11 +1129,9 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
                         accumulatedText = full;
                     },
                     onProcessSpawned: (proc) => {
-                        const key = capturedSessionId || sessionId || processKey;
-                        activeAntigravityProcesses.set(key, proc);
-                        if (sessionId && sessionId !== key) {
-                            activeAntigravityProcesses.set(sessionId, proc);
-                        }
+                        currentTurnProc = proc;
+                        const keys = [capturedSessionId, sessionId, processKey].filter(Boolean);
+                        registerManagedProcess(keys, proc);
                     },
                 });
                 finalResult = turnResult;
@@ -1183,11 +1348,9 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
                             accumulatedText = full;
                         },
                         onProcessSpawned: (proc) => {
-                            const key = capturedSessionId || sessionId || processKey;
-                            activeAntigravityProcesses.set(key, proc);
-                            if (sessionId && sessionId !== key) {
-                                activeAntigravityProcesses.set(sessionId, proc);
-                            }
+                            currentTurnProc = proc;
+                            const keys = [capturedSessionId, sessionId, processKey].filter(Boolean);
+                            registerManagedProcess(keys, proc);
                         },
                     });
                     finalResult = nextTurnResult;
@@ -1301,8 +1464,9 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
                         onTextDelta: (delta) => { accumulatedText += delta; },
                         onFullText: (full) => { accumulatedText = full; },
                         onProcessSpawned: (proc) => {
-                            const key = capturedSessionId || sessionId || processKey;
-                            activeAntigravityProcesses.set(key, proc);
+                            currentTurnProc = proc;
+                            const keys = [capturedSessionId, sessionId, processKey].filter(Boolean);
+                            registerManagedProcess(keys, proc);
                         },
                     });
                     if (recoveryResult) {
@@ -1381,20 +1545,7 @@ export const antigravityRuntime = {
         return spawnAntigravity(command, options, writer, context);
     },
     abort(sessionId) {
-        const controller = activeAbortControllers.get(sessionId);
-        if (controller) {
-            controller.abort();
-        }
-        const proc = activeAntigravityProcesses.get(sessionId);
-        if (proc) {
-            try {
-                proc.kill('SIGTERM');
-            }
-            catch (_) { }
-            activeAntigravityProcesses.delete(sessionId);
-            return true;
-        }
-        return Boolean(controller);
+        return abortAntigravityProcessesByKey(sessionId);
     },
 };
 //# sourceMappingURL=antigravity-runtime.provider.js.map

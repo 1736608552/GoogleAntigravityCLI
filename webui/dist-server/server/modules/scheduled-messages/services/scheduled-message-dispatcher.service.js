@@ -1,14 +1,21 @@
 import { scheduledMessagesDb, sessionDraftsDb } from '../../../modules/database/index.js';
-import { chatRunRegistry, runDetachedChatTurn } from '../../../modules/websocket/index.js';
+import { chatRunRegistry, onRunSettled, runDetachedChatTurn } from '../../../modules/websocket/index.js';
 /**
  * How often due messages are looked for.
  *
  * A minute is the granularity the composer offers, and a claim is indexed on
  * `(status, scheduled_for)`, so the poll is one cheap query. Anything finer
  * would buy precision nobody asked for.
+ *
+ * Queued messages do not wait for this: they are also dispatched the moment
+ * the run that blocked them settles (see `unsubscribeRunSettled` below). The
+ * poll remains their safety net for the cases no run-settled event covers —
+ * a message queued while nothing was running, or one left behind by a server
+ * restart.
  */
 const POLL_INTERVAL_MS = 30_000;
 let pollTimer = null;
+let unsubscribeRunSettled = null;
 let dispatchInFlight = false;
 function readOptions(raw) {
     try {
@@ -60,9 +67,14 @@ async function sendClaimedQueuedMessage(candidate, runtime) {
     }
     sessionDraftsDb.deleteEmptyDraft(candidate.userId, candidate.sessionId);
 }
-/** Sends every persisted queued turn whose session is currently idle. */
-export async function dispatchQueuedMessages(runtime) {
-    const candidates = sessionDraftsDb.listQueuedMessages();
+/**
+ * Sends every persisted queued turn whose session is currently idle.
+ *
+ * With a `sessionId`, only that session's queued turn is looked at: a run that
+ * settles can only have unblocked its own session.
+ */
+export async function dispatchQueuedMessages(runtime, sessionId) {
+    const candidates = sessionDraftsDb.listQueuedMessages(sessionId);
     let claimed = 0;
     await Promise.all(candidates.map(async (candidate) => {
         if (chatRunRegistry.isProcessing(candidate.sessionId)) {
@@ -151,10 +163,21 @@ export function initializeScheduledMessageDispatcher(runtime) {
     pollTimer = setInterval(poll, POLL_INTERVAL_MS);
     // Never keep the process alive just to poll for scheduled messages.
     pollTimer.unref?.();
+    // A message queued during a turn is sent as soon as that turn ends.
+    unsubscribeRunSettled = onRunSettled((appSessionId) => {
+        void dispatchQueuedMessages(runtime, appSessionId).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error('[ScheduledMessages] run-settled dispatch failed', { error: message });
+        });
+    });
     // Catch up on anything that came due while the server was not running.
     poll();
 }
 export function closeScheduledMessageDispatcher() {
+    if (unsubscribeRunSettled) {
+        unsubscribeRunSettled();
+        unsubscribeRunSettled = null;
+    }
     if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;

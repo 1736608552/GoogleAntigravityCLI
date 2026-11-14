@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
@@ -86,6 +87,40 @@ async function removeFileIfExists(filePath: string): Promise<boolean> {
     }
     throw error;
   }
+}
+
+/**
+ * 在 Linux 系统层通过 /proc 精准扫描并强杀属于指定会话的所有 Antigravity 残留进程
+ */
+function reapSessionAntigravityProcesses(candidateIds: string[]): number {
+  if (process.platform !== 'linux' || candidateIds.length === 0) return 0;
+  let reaped = 0;
+  try {
+    const validIds = candidateIds.filter((id) => typeof id === 'string' && id.trim().length > 5);
+    if (validIds.length === 0) return 0;
+
+    for (const entry of fs.readdirSync('/proc')) {
+      if (!/^\d+$/.test(entry)) continue;
+      const pid = Number(entry);
+      if (pid === process.pid) continue;
+      let cmdline = '';
+      try {
+        cmdline = fs.readFileSync(`/proc/${entry}/cmdline`, 'utf8');
+      } catch {
+        continue;
+      }
+      if (!cmdline.includes('antigravity')) continue;
+
+      const matches = validIds.some((id) => cmdline.includes(id));
+      if (matches) {
+        try {
+          process.kill(pid, 'SIGKILL');
+          reaped++;
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return reaped;
 }
 
 /**
@@ -589,14 +624,23 @@ export const sessionsService = {
       });
     }
 
-    // 先中止可能仍在运行的底层会话进程，杜绝继续向磁盘写入日志
+    // 收集所有关联标识（前端会话 ID、后端提供商原生 ID、分支来源 ID）
+    const candidateIds = new Set<string>();
+    if (sessionId) candidateIds.add(sessionId);
+    if (session.provider_session_id) candidateIds.add(session.provider_session_id);
+    if (session.forked_from_session_id) candidateIds.add(session.forked_from_session_id);
+    const candidateList = Array.from(candidateIds);
+
+    // 先中止可能仍在运行的底层会话进程，杜绝继续占用系统资源或向磁盘写入日志
     try {
       const { providerRuntimeService } = await import(
         '@/modules/providers/services/provider-runtime.service.js'
       );
-      await providerRuntimeService.abort(session.provider as LLMProvider, sessionId).catch(() => {});
-      if (session.provider_session_id && session.provider_session_id !== sessionId) {
-        await providerRuntimeService.abort(session.provider as LLMProvider, session.provider_session_id).catch(() => {});
+      for (const id of candidateList) {
+        await providerRuntimeService.abort(session.provider as LLMProvider, id).catch(() => {});
+        try {
+          providerRegistry.resolveProvider('antigravity').runtime.abort?.(id);
+        } catch (_) {}
       }
     } catch (_) {}
 
@@ -643,16 +687,24 @@ export const sessionsService = {
       }
     }
 
-    // 关键自愈优化：删除会话时，主动中止并在 OS 层面强杀该会话残留的所有后台孤儿进程
-    try {
-      chatRunRegistry.completeRun(sessionId, { exitCode: 1 });
-    } catch (_) {}
-    try {
-      providerRegistry.resolveProvider('antigravity').runtime.abort?.(sessionId);
-    } catch (_) {}
-    try {
-      execFileSync('pkill', ['-9', '-f', `conversation ${sessionId}`]);
-    } catch (_) {}
+    // 关键自愈优化：彻底删除会话时，主动中止并在 OS 层面强杀该会话残留的所有后台孤儿进程
+    for (const id of candidateList) {
+      try {
+        chatRunRegistry.completeRun(id, { exitCode: 1 });
+      } catch (_) {}
+      try {
+        providerRegistry.resolveProvider('antigravity').runtime.abort?.(id);
+      } catch (_) {}
+      try {
+        execFileSync('pkill', ['-9', '-f', '--', `conversation ${id}`]);
+      } catch (_) {}
+      try {
+        execFileSync('pkill', ['-9', '-f', '--', `--conversation ${id}`]);
+      } catch (_) {}
+    }
+
+    // OS 级深度清扫：精准扫描 /proc 中所有命令行包含该会话 ID 的 antigravity 残留进程
+    reapSessionAntigravityProcesses(candidateList);
 
     sessionsDb.clearSupersededProviderSessions(sessionId);
     const deleted = sessionsDb.deleteSessionById(sessionId);

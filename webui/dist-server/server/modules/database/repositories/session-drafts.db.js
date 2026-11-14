@@ -37,14 +37,17 @@ export const sessionDraftsDb = {
             .all(userId);
         return rows.map(toRecord);
     },
-    /** Lists persisted queued turns whose scopes are real chat sessions. */
-    listQueuedMessages() {
-        const rows = getConnection()
-            .prepare(`SELECT drafts.user_id, drafts.draft_scope, drafts.queued_message
+    /**
+     * Lists persisted queued turns whose scopes are real chat sessions, or only
+     * the given session's when one is passed.
+     */
+    listQueuedMessages(sessionId) {
+        const sql = `SELECT drafts.user_id, drafts.draft_scope, drafts.queued_message
          FROM session_drafts AS drafts
          INNER JOIN sessions ON sessions.session_id = drafts.draft_scope
-         WHERE drafts.queued_message IS NOT NULL`)
-            .all();
+         WHERE drafts.queued_message IS NOT NULL`;
+        const statement = getConnection().prepare(sessionId === undefined ? sql : `${sql} AND drafts.draft_scope = ?`);
+        const rows = (sessionId === undefined ? statement.all() : statement.all(sessionId));
         return rows.map((row) => ({
             userId: row.user_id,
             sessionId: row.draft_scope,

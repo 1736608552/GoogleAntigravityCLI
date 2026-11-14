@@ -236,6 +236,19 @@
     },
     "providers": {
       "assistant": "助手"
+    },
+    "backgroundTask": {
+      "workflow": "工作流 {{name}}",
+      "agent": "子代理 {{description}}",
+      "command": "命令 {{description}}",
+      "count": "{{count}} 项任务",
+      "prompt": {
+        "title": "当前会话仍有后台任务正在运行",
+        "description": "发送新消息将开启新轮次并终止正在运行的后台任务；未汇报的内容可能会丢失。你可以选择排队发送，等待后台任务执行完成后自动发送。",
+        "cancel": "取消",
+        "queue": "排队等待 (Queue)",
+        "sendAnyway": "仍要发送 (终止任务)"
+      }
     }
   },
   "projectSelection": {

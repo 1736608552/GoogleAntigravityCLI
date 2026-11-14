@@ -653,6 +653,14 @@ export type QueuedDraft = {
   options?: QueuedSendOptions;
 };
 
+/** The answer to the prompt shown when sending over a session's background work: send now (stopping that work), queue the message until the work finishes, or do nothing. */
+export type BackgroundSendChoice = 'send' | 'queue' | 'cancel';
+
+/** An open background-work send prompt, listing the session's own background tasks as display strings. */
+export type BackgroundSendPrompt = {
+  work: string[];
+};
+
 /** Viewport-relative placement box (right/bottom offsets plus max height and width) computed for a composer popover so the model and permission menus stay inside the window. */
 export type ComposerMenuAnchor = {
   right: number;
@@ -1231,6 +1239,7 @@ export type AntigravityAccount = {
   tier?: string;
   tierType?: 'pro' | 'enterprise' | 'free';
   isPro?: boolean;
+  quotaSnapshot?: AntigravityQuotaSnapshot;
 };
 
 /** A project as the settings dialog needs it - a required identifier in `name` plus optional display name and paths - passed down to the MCP and skills panels so they can scope configuration to a project. */
