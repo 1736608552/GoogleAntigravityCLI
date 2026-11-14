@@ -487,42 +487,16 @@ class AntigravityAccountsService {
 
   public getLiveQuotaCached(targetEmail?: string): AntigravityQuotaSnapshot | null {
     const resolvedEmail = (targetEmail || this.getActiveEmail() || '').toLowerCase();
-    const accounts = this.loadAccounts();
 
-    // 1. 若指定目标账号，或者能确定当前激活账号，优先且严格返回该账号所属快照
+    // 1. 严格只从当前内存活跃快照池中读取（必须是语言服务器/API实时拉取的快照，绝不读取磁盘陈旧冷数据）
     if (resolvedEmail) {
       const entry = this.accountQuotaSnapshots.get(resolvedEmail);
       if (entry?.snapshot) {
         return this.refreshSnapshotCountdowns(entry.snapshot);
       }
-      const acc = accounts.find((a) => a.email.toLowerCase() === resolvedEmail);
-      if (acc?.quotaSnapshot) {
-        return this.refreshSnapshotCountdowns(acc.quotaSnapshot);
-      }
-      if (acc?.quotaSummary) {
-        const snap = this.buildQuotaSnapshot(acc.quotaSummary, acc.email);
-        return this.refreshSnapshotCountdowns(snap);
-      }
     }
 
-    // 2. 解析系统当前激活账号
-    const active = accounts.find((a) => a.isActive) || accounts[0];
-    if (active) {
-      const activeKey = active.email.toLowerCase();
-      const entry = this.accountQuotaSnapshots.get(activeKey);
-      if (entry?.snapshot) {
-        return this.refreshSnapshotCountdowns(entry.snapshot);
-      }
-      if (active.quotaSnapshot) {
-        return this.refreshSnapshotCountdowns(active.quotaSnapshot);
-      }
-      if (active.quotaSummary) {
-        const snap = this.buildQuotaSnapshot(active.quotaSummary, active.email);
-        return this.refreshSnapshotCountdowns(snap);
-      }
-    }
-
-    // 3. 仅作为最后安全兜底，检查 cachedQuotaSnapshot 是否属于该账号
+    // 2. 内存全局快照兜底
     if (this.cachedQuotaSnapshot) {
       if (!resolvedEmail || (this.cachedQuotaSnapshot.accountEmail && this.cachedQuotaSnapshot.accountEmail.toLowerCase() === resolvedEmail)) {
         return this.refreshSnapshotCountdowns(this.cachedQuotaSnapshot);
@@ -1305,13 +1279,11 @@ class AntigravityAccountsService {
     }
     const activeEmail = activeAccount?.email || null;
 
-    // Update isActive and tier flags on list, and inject latest live quota
-    let activeSnapshot = this.getLiveQuotaCached(activeEmail || undefined);
-    if (!activeSnapshot && activeEmail) {
-      try {
-        activeSnapshot = await this.fetchLiveQuotaSummary(false, activeEmail);
-      } catch (_) {}
-    }
+    // Update isActive and tier flags on list, and inject latest live quota directly from language server
+    let activeSnapshot: AntigravityQuotaSnapshot | null = null;
+    try {
+      activeSnapshot = await this.fetchLiveQuotaSummary(false, activeEmail || undefined);
+    } catch (_) {}
     for (const a of accounts) {
       a.isActive = (a.email.toLowerCase() === (activeEmail || '').toLowerCase());
       if (a.isActive && activeSnapshot) {
