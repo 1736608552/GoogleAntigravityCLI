@@ -200,7 +200,7 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
       // 5. Fetch live quota
       try {
         const emailToFetch = fetchedActiveEmail || undefined;
-        const qRes = await api.providers.antigravityQuota(false, emailToFetch);
+        const qRes = await api.providers.antigravityQuota(true, emailToFetch);
         if (qRes.ok) {
           const qData = await readApiJson<any>(qRes);
           const snap = qData?.data || qData;
@@ -562,10 +562,7 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
         {/* Quota Snapshots Mini Bar (纯实时模型双配额直通：5小时额度 + 每周总额度并行跑) */}
         {(() => {
           const curAcc = accounts.find((a) => (a.email || '').toLowerCase() === (activeEmail || '').toLowerCase());
-          const displaySnap =
-            (quotaSnapshot?.accountEmail && activeEmail && quotaSnapshot.accountEmail.toLowerCase() === activeEmail.toLowerCase())
-              ? quotaSnapshot
-              : (curAcc?.quotaSnapshot || quotaSnapshot);
+          const displaySnap = quotaSnapshot || curAcc?.quotaSnapshot;
           if (!displaySnap) return null;
 
           // Gemini 5h 与周配额

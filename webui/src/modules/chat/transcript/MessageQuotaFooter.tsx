@@ -189,6 +189,22 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
   const poolWeeklyLabel = isGemini ? 'Gemini周' : isGpt ? 'GPT周' : 'Claude周';
   const weeklyDisplayTag = weeklyResetTag;
 
+  // 3色物理分段进度条各段充盈比例 (周额度)
+  const wRedFill = Math.min(100, Math.max(0, (weeklyPct / 20) * 100));
+  const wAmberFill = Math.min(100, Math.max(0, ((weeklyPct - 20) / 30) * 100));
+  const wGreenFill = Math.min(100, Math.max(0, ((weeklyPct - 50) / 50) * 100));
+
+  const isWeeklySafeZone = weeklyPct >= 50;
+  const isWeeklyWarningZone = weeklyPct >= 20 && weeklyPct < 50;
+  const isWeeklyDangerZone = weeklyPct < 20;
+
+  const weeklyZoneTag = isWeeklySafeZone ? '安全' : isWeeklyWarningZone ? '注意' : '告急';
+  const weeklyZoneTitle = isWeeklySafeZone
+    ? '🟢 周额度绿区 (50%~100%)：每周全局预算充沛'
+    : isWeeklyWarningZone
+    ? '🟡 周额度警戒黄区 (20%~50%)：每周预算消耗过半'
+    : '🔴 周额度告急红区 (0%~20%)：逼近每周硬顶限制';
+
   const displayEmail = targetEmail || actualLiveQuota?.accountEmail;
 
   return (
@@ -267,11 +283,11 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
               void refreshQuota(true, displayEmail);
             }}
             className="flex flex-wrap cursor-pointer items-center gap-1.5 sm:gap-2 rounded-lg py-0.5 transition-all hover:opacity-90 active:scale-95"
-            title={`${zoneTitle} · 实时额度: ${h5Pct}% (${h5ResetStr ? `${h5ResetStr} 恢复` : '正常'})${displayEmail ? ` · 账号: ${displayEmail}` : ''} · 点击实时刷新`}
+            title={`${zoneTitle} · 5h额度: ${h5Pct}% (${h5ResetStr ? `${h5ResetStr} 恢复` : '正常'}) · 周额度: ${weeklyPct}% (${weeklyResetStr}) · 账号: ${displayEmail || '当前'} · 点击实时刷新`}
           >
-            {/* 100% 真实模型配额胶囊 (带 50% 与 20% 刻度标记线) */}
+            {/* 1. 5小时滚动额度胶囊 */}
             <div
-              className={`inline-flex items-center gap-1 sm:gap-1.5 rounded-md px-2 py-0.5 text-[11px] whitespace-nowrap shrink-0 border ${
+              className={`inline-flex items-center gap-1 sm:gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] whitespace-nowrap shrink-0 border ${
                 isDangerZone
                   ? 'border-rose-500/35 bg-rose-500/10 hover:border-rose-500/60'
                   : isWarningZone
@@ -283,47 +299,33 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
                   : 'border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50'
               }`}
             >
-              <span className={`text-[10.5px] font-medium whitespace-nowrap ${
+              <span className={`text-[10px] font-medium whitespace-nowrap ${
                 isDangerZone
                   ? 'text-rose-600 dark:text-rose-400'
                   : isWarningZone
                   ? 'text-amber-600 dark:text-amber-400'
                   : isClaude ? 'text-purple-600 dark:text-purple-400' : isGpt ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'
               }`}>
-                {isGemini ? 'Gemini 实时额度' : isGpt ? 'GPT 实时额度' : 'Claude 实时额度'}
+                {isGemini ? 'Gemini 5h' : isGpt ? 'GPT 5h' : 'Claude 5h'}
               </span>
 
-              {/* 3色物理分段进度条：0~20% 告急红区 / 20~50% 警戒黄区 / 50~100% 充裕绿区 */}
+              {/* 3色物理分段进度条 (5h) */}
               <div
-                className="flex items-center gap-0.5 h-2 w-14 sm:w-20 shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
-                title={`3色分段刻度：红区(0%~20% 告急) / 黄区(20%~50% 警戒) / 绿区(50%~100% 充裕) · 当前剩余 ${h5Pct}%`}
+                className="flex items-center gap-0.5 h-1.5 w-10 sm:w-14 shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                title={`5小时分段刻度 · 当前剩余 ${h5Pct}%`}
               >
-                {/* 危险红段 (0%~20%，权重2) */}
-                <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden" title="危险段(0%~20%)">
-                  <div
-                    className="h-full bg-rose-500 transition-all duration-300 rounded-full"
-                    style={{ width: `${redFill}%` }}
-                  />
+                <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
+                  <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${redFill}%` }} />
                 </div>
-
-                {/* 预警黄段 (20%~50%，权重3) */}
-                <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden" title="预警段(20%~50%)">
-                  <div
-                    className="h-full bg-amber-400 transition-all duration-300 rounded-full"
-                    style={{ width: `${amberFill}%` }}
-                  />
+                <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
+                  <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${amberFill}%` }} />
                 </div>
-
-                {/* 安全绿段 (50%~100%，权重5) */}
-                <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden" title="安全段(50%~100%)">
-                  <div
-                    className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
-                    style={{ width: `${greenFill}%` }}
-                  />
+                <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden">
+                  <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${greenFill}%` }} />
                 </div>
               </div>
 
-              <span className={`font-mono font-semibold text-[10.5px] ${
+              <span className={`font-mono font-semibold text-[10px] ${
                 isDangerZone
                   ? 'text-rose-600 dark:text-rose-400 font-bold'
                   : isWarningZone
@@ -335,8 +337,7 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
                 {h5Pct}%
               </span>
 
-              {/* 极简安全状态标记徽章 */}
-              <span className={`px-1 py-0.2 rounded text-[9px] font-semibold leading-none ${
+              <span className={`px-1 py-0.2 rounded text-[8.5px] font-semibold leading-none ${
                 isSafeZone
                   ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
                   : isWarningZone
@@ -346,7 +347,72 @@ const MessageQuotaFooter: React.FC<MessageQuotaFooterProps> = ({ message, provid
                 {zoneTag}
               </span>
 
-              <span className="font-mono text-[9.5px] text-muted-foreground/75">({h5DisplayTag})</span>
+              <span className="font-mono text-[9px] text-muted-foreground/75">({h5DisplayTag})</span>
+            </div>
+
+            {/* 2. 每周总额度胶囊 */}
+            <div
+              className={`inline-flex items-center gap-1 sm:gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] whitespace-nowrap shrink-0 border ${
+                isWeeklyDangerZone
+                  ? 'border-rose-500/35 bg-rose-500/10 hover:border-rose-500/60'
+                  : isWeeklyWarningZone
+                  ? 'border-amber-500/35 bg-amber-500/10 hover:border-amber-500/60'
+                  : isClaude
+                  ? 'border-purple-500/25 bg-purple-500/5 hover:border-purple-500/50'
+                  : isGpt
+                  ? 'border-blue-500/25 bg-blue-500/5 hover:border-blue-500/50'
+                  : 'border-emerald-500/25 bg-emerald-500/5 hover:border-emerald-500/50'
+              }`}
+            >
+              <span className={`text-[10px] font-medium whitespace-nowrap ${
+                isWeeklyDangerZone
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : isWeeklyWarningZone
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : isClaude ? 'text-purple-600 dark:text-purple-400' : isGpt ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'
+              }`}>
+                {isGemini ? 'Gemini 周' : isGpt ? 'GPT 周' : 'Claude 周'}
+              </span>
+
+              {/* 3色物理分段进度条 (周额度) */}
+              <div
+                className="flex items-center gap-0.5 h-1.5 w-10 sm:w-14 shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                title={`周额度分段刻度 · 当前剩余 ${weeklyPct}%`}
+              >
+                <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
+                  <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${wRedFill}%` }} />
+                </div>
+                <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
+                  <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${wAmberFill}%` }} />
+                </div>
+                <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden">
+                  <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${wGreenFill}%` }} />
+                </div>
+              </div>
+
+              <span className={`font-mono font-semibold text-[10px] ${
+                isWeeklyDangerZone
+                  ? 'text-rose-600 dark:text-rose-400 font-bold'
+                  : isWeeklyWarningZone
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : weeklyPct < 100
+                  ? isClaude ? 'text-purple-600 dark:text-purple-400' : isGpt ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-foreground'
+              }`}>
+                {weeklyPct}%
+              </span>
+
+              <span className={`px-1 py-0.2 rounded text-[8.5px] font-semibold leading-none ${
+                isWeeklySafeZone
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                  : isWeeklyWarningZone
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+              }`}>
+                {weeklyZoneTag}
+              </span>
+
+              <span className="font-mono text-[9px] text-muted-foreground/75">({weeklyDisplayTag})</span>
             </div>
           </div>
 

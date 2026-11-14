@@ -459,6 +459,7 @@ class AntigravityAccountsService {
                 if (acc) {
                     acc.quotaSnapshot = lsSnapshot;
                     acc.lastQuotaFetchedAt = now;
+                    this.saveAccounts(accs);
                 }
                 if (emailKey) {
                     this.accountQuotaSnapshots.set(emailKey, { snapshot: lsSnapshot, time: now });
@@ -1092,13 +1093,18 @@ class AntigravityAccountsService {
         return accounts;
     }
     saveAccounts(accounts) {
-        const accountsFile = this.getAccountsFilePath();
-        try {
-            fs.mkdirSync(path.dirname(accountsFile), { recursive: true });
-            fs.writeFileSync(accountsFile, JSON.stringify(accounts, null, 2), 'utf8');
-        }
-        catch (e) {
-            console.error('[AntigravityAccounts] Failed to save accounts.json:', e);
+        const targetFiles = [
+            this.getAccountsFilePath(),
+            '/vol1/@apphome/GoogleAntigravityCLI/data/accounts.json',
+        ];
+        for (const f of targetFiles) {
+            try {
+                fs.mkdirSync(path.dirname(f), { recursive: true });
+                fs.writeFileSync(f, JSON.stringify(accounts, null, 2), 'utf8');
+            }
+            catch (e) {
+                console.error(`[AntigravityAccounts] Failed to save accounts.json to ${f}:`, e);
+            }
         }
     }
     async listAccounts() {
@@ -1111,9 +1117,24 @@ class AntigravityAccountsService {
             this.saveAccounts(accounts);
         }
         const activeEmail = activeAccount?.email || null;
-        // Update isActive and tier flags on list
+        // Update isActive and tier flags on list, and inject latest live quota
+        let activeSnapshot = this.getLiveQuotaCached(activeEmail || undefined);
+        if (!activeSnapshot && activeEmail) {
+            try {
+                activeSnapshot = await this.fetchLiveQuotaSummary(false, activeEmail);
+            }
+            catch (_) { }
+        }
         for (const a of accounts) {
             a.isActive = (a.email.toLowerCase() === (activeEmail || '').toLowerCase());
+            if (a.isActive && activeSnapshot) {
+                a.quotaSnapshot = activeSnapshot;
+            }
+            else {
+                const cached = this.getLiveQuotaCached(a.email);
+                if (cached)
+                    a.quotaSnapshot = cached;
+            }
             if (a.isPro === undefined) {
                 a.isPro = a.tierType === 'enterprise' || a.tierType === 'pro' || a.authMethod === 'consumer' || true;
             }

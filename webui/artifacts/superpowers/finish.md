@@ -1,20 +1,18 @@
-# Google Antigravity 原生语言服务器双配额体系交付总结 (Finish Summary)
+# Google Antigravity 原生语言服务器双配额体系交付总结 (Finish Summary - 第二轮闭环)
 
-## 1. 核心成果
-1. **彻底攻克了“配额永远100%”与“重置时间总是1天15小时（固定周一）”的痼疾**：
-   - 官方周重置是**滚动 7 天窗口（Rolling 7-Day Window，168 小时）**，按用户首笔大额消耗起精确向后推算 7 天（实测为 6天 23小时）；
-   - 官方 5 小时重置是**滚动 5 小时窗口**（实测为 4小时 20分钟）；
-   - 百分比是动态消耗的真实浮点数（实测当前 Gemini 5h 剩余 89%，Gemini 周额度剩余 94.4%）。
-2. **完整接入 Antigravity 官方语言服务器原生数据通道**：
-   - 支持环境变量、会话持久化与 `/proc` 逆序进程扫描三重自愈探活机制；
-   - 任何会话环境下均能毫秒级直连 `RetrieveUserQuotaSummary`，绝不凭空推算或猜算。
-3. **前端双排独立展示卡片**：
-   - 【⚡ 5小时滚动额度】与【📅 每周总额度】并列展示，3 色分段物理刻度、各自独立的倒计时及步数统计。
+## 1. 核心成果与修复
+1. **解决设置页账号列表旧缓存 100% 倒退问题**：
+   - 根因定位：在 `listAccounts()` 返回前，账号列表从磁盘 `accounts.json` 读取了旧的静态快照（100% 和 1天14小时）；同时存在两个物理路径（`~/.gemini/antigravity-cli/accounts.json` 与 `data/accounts.json`）。
+   - 修复：在 `listAccounts()` 内部对活跃账号直接注入最新的原生快照；并将最新快照双路保存覆盖磁盘上的两个 `accounts.json`；前端设置页 `AntigravityProxySection.tsx` 将实时拉取的 `quotaSnapshot` 赋予绝对优先权，并在初次加载时强制刷新。
+2. **全面升级会话消息底部结束标签（`MessageQuotaFooter.tsx`）**：
+   - 在每条消息的底部状态栏，同时并列呈现【⚡ 5h 滚动额度】与【📅 每周总额度】两个官方配额胶囊；
+   - 每个胶囊均配备独立的 3 色物理分段刻度进度条、独立的剩余百分比（如 83.3% 与 92.7%）、安全状态标记及高精度动态倒计时（如 `4h` 与 `6天23h`）；
+   - 点击任一胶囊即可触发双配额官方云端实时刷新。
 
 ## 2. 验证清单
-- [x] 后端 TypeScript 编译通过（`npm run build:server`）
-- [x] 前端 Vite 构建通过（`npm run build:client`）
+- [x] 后端 TypeScript 编译（`npm run build:server`）0 错误通过
+- [x] 前端 Vite 构建（`npm run build:client`）0 错误通过
 - [x] 服务进程平滑热重启无中断
-- [x] WebUI HTTP API（`/api/providers/antigravity/quota`）实测返回原生真实双配额
-- [x] 遵守 19999 端口反重力隔离守则
+- [x] WebUI 真实 API：`GET /api/providers/antigravity/accounts` 实测返回 83.3% / 92.7%
+- [x] WebUI 真实 API：`GET /api/providers/antigravity/quota?force=true` 实测返回 83.3% / 92.7%
 - [x] 敏感凭据全面脱敏审查
