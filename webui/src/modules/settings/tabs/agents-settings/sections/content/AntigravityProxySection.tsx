@@ -15,6 +15,9 @@ import {
   ChevronUp,
   MapPin,
   Sliders,
+  Info,
+  Clock,
+  Calendar,
 } from 'lucide-react';
 
 import { api, readApiJson } from '@/shared/api';
@@ -556,7 +559,7 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
           </div>
         )}
 
-        {/* Quota Snapshots Mini Bar (纯实时模型配额直通) */}
+        {/* Quota Snapshots Mini Bar (纯实时模型双配额直通：5小时额度 + 每周总额度并行跑) */}
         {(() => {
           const curAcc = accounts.find((a) => (a.email || '').toLowerCase() === (activeEmail || '').toLowerCase());
           const displaySnap =
@@ -564,97 +567,211 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
               ? quotaSnapshot
               : (curAcc?.quotaSnapshot || quotaSnapshot);
           if (!displaySnap) return null;
-          const geminiPct = displaySnap.gemini5h?.percent ?? 100;
-          const gRed = Math.min(100, Math.max(0, (geminiPct / 20) * 100));
-          const gAmber = Math.min(100, Math.max(0, ((geminiPct - 20) / 30) * 100));
-          const gGreen = Math.min(100, Math.max(0, ((geminiPct - 50) / 50) * 100));
 
-          const claudePct = displaySnap.claude5h?.percent ?? 100;
-          const cRed = Math.min(100, Math.max(0, (claudePct / 20) * 100));
-          const cAmber = Math.min(100, Math.max(0, ((claudePct - 20) / 30) * 100));
-          const cGreen = Math.min(100, Math.max(0, ((claudePct - 50) / 50) * 100));
+          // Gemini 5h 与周配额
+          const g5hPct = displaySnap.gemini5h?.percent ?? 100;
+          const g5hRed = Math.min(100, Math.max(0, (g5hPct / 20) * 100));
+          const g5hAmber = Math.min(100, Math.max(0, ((g5hPct - 20) / 30) * 100));
+          const g5hGreen = Math.min(100, Math.max(0, ((g5hPct - 50) / 50) * 100));
+
+          const gWeeklyPct = displaySnap.geminiWeekly?.percent ?? g5hPct;
+          const gWRed = Math.min(100, Math.max(0, (gWeeklyPct / 20) * 100));
+          const gWAmber = Math.min(100, Math.max(0, ((gWeeklyPct - 20) / 30) * 100));
+          const gWGreen = Math.min(100, Math.max(0, ((gWeeklyPct - 50) / 50) * 100));
+
+          // Claude / GPT 5h 与周配额
+          const c5hPct = displaySnap.claude5h?.percent ?? 100;
+          const c5hRed = Math.min(100, Math.max(0, (c5hPct / 20) * 100));
+          const c5hAmber = Math.min(100, Math.max(0, ((c5hPct - 20) / 30) * 100));
+          const c5hGreen = Math.min(100, Math.max(0, ((c5hPct - 50) / 50) * 100));
+
+          const cWeeklyPct = displaySnap.claudeWeekly?.percent ?? c5hPct;
+          const cWRed = Math.min(100, Math.max(0, (cWeeklyPct / 20) * 100));
+          const cWAmber = Math.min(100, Math.max(0, ((cWeeklyPct - 20) / 30) * 100));
+          const cWGreen = Math.min(100, Math.max(0, ((cWeeklyPct - 50) / 50) * 100));
+
+          const weeklyResetTime = displaySnap.geminiWeekly?.resetTime || displaySnap.weeklyResetTime;
 
           return (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
-              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-1.5">
-                <div className="text-muted-foreground text-[10px] flex items-center justify-between">
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">Gemini 官方实时额度</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`px-1 py-0.2 rounded text-[9px] font-semibold leading-none ${
-                      geminiPct >= 50
-                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                        : geminiPct >= 20
-                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                        : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
-                    }`}>
-                      {geminiPct >= 50 ? '安全' : geminiPct >= 20 ? '注意' : '告急'}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-[11px]">
+              {/* Gemini 官方模型双配额卡片 */}
+              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-2">
+                <div className="text-muted-foreground text-[10.5px] flex items-center justify-between pb-1 border-b border-border/40">
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <Zap className="h-3 w-3" />
+                    Gemini 官方模型
+                  </span>
+                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold leading-none ${
+                    g5hPct >= 50
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                      : g5hPct >= 20
+                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                  }`}>
+                    {g5hPct >= 50 ? '状态充沛' : g5hPct >= 20 ? '额度偏紧' : '额度告急'}
+                  </span>
+                </div>
+
+                {/* 5小时滚动额度 */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-2.5 w-2.5 text-emerald-500/80" />
+                      5小时滚动额度
                     </span>
-                    <span className={`font-bold font-mono text-xs ${geminiPct < 100 ? 'text-emerald-500 font-semibold' : 'text-foreground'}`}>
-                      {geminiPct}%
+                    <span className={`font-bold font-mono text-[11px] ${g5hPct < 100 ? 'text-emerald-500 font-semibold' : 'text-foreground'}`}>
+                      {g5hPct}%
                     </span>
+                  </div>
+                  <div
+                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                    title={`5小时额度当前剩余 ${g5hPct}%`}
+                  >
+                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
+                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${g5hRed}%` }} />
+                    </div>
+                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
+                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${g5hAmber}%` }} />
+                    </div>
+                    <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden">
+                      <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${g5hGreen}%` }} />
+                    </div>
+                  </div>
+                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <span>5h窗口重置:</span>
+                      {typeof displaySnap.metrics?.fiveHourSteps === 'number' && displaySnap.metrics.fiveHourSteps > 0 && (
+                        <span className="text-[9px] text-emerald-600/80 dark:text-emerald-400/80 font-sans">(5h已调{displaySnap.metrics.fiveHourSteps}步)</span>
+                      )}
+                    </span>
+                    <span className="text-foreground font-medium">{formatDynamicCountdown(displaySnap.gemini5h?.resetTime)}</span>
                   </div>
                 </div>
 
-                {/* 3色物理分段进度条：红段 20% / 黄段 30% / 绿段 50% */}
-                <div
-                  className="flex items-center gap-1 h-2 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
-                  title={`3色分段刻度：红区(0%~20% 告急) / 黄区(20%~50% 警戒) / 绿区(50%~100% 充裕) · 当前剩余 ${geminiPct}%`}
-                >
-                  <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden" title="危险段(0%~20%)">
-                    <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${gRed}%` }} />
+                {/* 每周总额度 */}
+                <div className="space-y-1 pt-1 border-t border-border/30">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      <Calendar className="h-2.5 w-2.5 text-blue-500/80" />
+                      每周总额度
+                    </span>
+                    <span className={`font-bold font-mono text-[11px] ${gWeeklyPct < 100 ? 'text-blue-500 font-semibold' : 'text-foreground'}`}>
+                      {gWeeklyPct}%
+                    </span>
                   </div>
-                  <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden" title="预警段(20%~50%)">
-                    <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${gAmber}%` }} />
+                  <div
+                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                    title={`每周总额度当前剩余 ${gWeeklyPct}%`}
+                  >
+                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
+                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${gWRed}%` }} />
+                    </div>
+                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
+                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${gWAmber}%` }} />
+                    </div>
+                    <div className="relative flex-[5] h-full rounded-full bg-blue-500/20 overflow-hidden">
+                      <div className="h-full bg-blue-500 transition-all duration-300 rounded-full" style={{ width: `${gWGreen}%` }} />
+                    </div>
                   </div>
-                  <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden" title="安全段(50%~100%)">
-                    <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${gGreen}%` }} />
+                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <span>周重置倒计时:</span>
+                      {typeof displaySnap.metrics?.weeklySteps === 'number' && displaySnap.metrics.weeklySteps > 0 && (
+                        <span className="text-[9px] text-blue-600/80 dark:text-blue-400/80 font-sans">(本周已调{(displaySnap.metrics.weeklySteps / 1000).toFixed(1)}k步)</span>
+                      )}
+                    </span>
+                    <span className="text-foreground font-medium">{formatDynamicCountdown(weeklyResetTime)}</span>
                   </div>
-                </div>
-
-                <div className="text-[10.5px] font-mono text-muted-foreground/85 truncate flex items-center justify-between">
-                  <span>下次重置倒计时:</span>
-                  <span className="font-semibold text-foreground">{formatDynamicCountdown(displaySnap.gemini5h?.resetTime)}</span>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-1.5">
-                <div className="text-muted-foreground text-[10px] flex items-center justify-between">
-                  <span className="font-semibold text-purple-600 dark:text-purple-400">Claude / GPT 官方实时额度</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`px-1 py-0.2 rounded text-[9px] font-semibold leading-none ${
-                      claudePct >= 50
-                        ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30'
-                        : claudePct >= 20
-                        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                        : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
-                    }`}>
-                      {claudePct >= 50 ? '安全' : claudePct >= 20 ? '注意' : '告急'}
+              {/* Claude / GPT 官方模型双配额卡片 */}
+              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-2">
+                <div className="text-muted-foreground text-[10.5px] flex items-center justify-between pb-1 border-b border-border/40">
+                  <span className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                    <Zap className="h-3 w-3" />
+                    Claude & GPT 官方模型
+                  </span>
+                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold leading-none ${
+                    c5hPct >= 50
+                      ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30'
+                      : c5hPct >= 20
+                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                  }`}>
+                    {c5hPct >= 50 ? '状态充沛' : c5hPct >= 20 ? '额度偏紧' : '额度告急'}
+                  </span>
+                </div>
+
+                {/* 5小时滚动额度 */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-2.5 w-2.5 text-purple-500/80" />
+                      5小时滚动额度
                     </span>
-                    <span className={`font-bold font-mono text-xs ${claudePct < 100 ? 'text-purple-500 font-semibold' : 'text-foreground'}`}>
-                      {claudePct}%
+                    <span className={`font-bold font-mono text-[11px] ${c5hPct < 100 ? 'text-purple-500 font-semibold' : 'text-foreground'}`}>
+                      {c5hPct}%
                     </span>
+                  </div>
+                  <div
+                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                    title={`5小时额度当前剩余 ${c5hPct}%`}
+                  >
+                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
+                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${c5hRed}%` }} />
+                    </div>
+                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
+                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${c5hAmber}%` }} />
+                    </div>
+                    <div className="relative flex-[5] h-full rounded-full bg-purple-500/20 overflow-hidden">
+                      <div className="h-full bg-purple-500 transition-all duration-300 rounded-full" style={{ width: `${c5hGreen}%` }} />
+                    </div>
+                  </div>
+                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
+                    <span>5h窗口重置:</span>
+                    <span className="text-foreground font-medium">{formatDynamicCountdown(displaySnap.claude5h?.resetTime)}</span>
                   </div>
                 </div>
 
-                {/* 3色物理分段进度条：红段 20% / 黄段 30% / 绿段 50% */}
-                <div
-                  className="flex items-center gap-1 h-2 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
-                  title={`3色分段刻度：红区(0%~20% 告急) / 黄区(20%~50% 警戒) / 绿区(50%~100% 充裕) · 当前剩余 ${claudePct}%`}
-                >
-                  <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden" title="危险段(0%~20%)">
-                    <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${cRed}%` }} />
+                {/* 每周总额度 */}
+                <div className="space-y-1 pt-1 border-t border-border/30">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-muted-foreground flex items-center gap-1">
+                      <Calendar className="h-2.5 w-2.5 text-blue-500/80" />
+                      每周总额度
+                    </span>
+                    <span className={`font-bold font-mono text-[11px] ${cWeeklyPct < 100 ? 'text-blue-500 font-semibold' : 'text-foreground'}`}>
+                      {cWeeklyPct}%
+                    </span>
                   </div>
-                  <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden" title="预警段(20%~50%)">
-                    <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${cAmber}%` }} />
+                  <div
+                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
+                    title={`每周总额度当前剩余 ${cWeeklyPct}%`}
+                  >
+                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
+                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${cWRed}%` }} />
+                    </div>
+                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
+                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${cWAmber}%` }} />
+                    </div>
+                    <div className="relative flex-[5] h-full rounded-full bg-blue-500/20 overflow-hidden">
+                      <div className="h-full bg-blue-500 transition-all duration-300 rounded-full" style={{ width: `${cWGreen}%` }} />
+                    </div>
                   </div>
-                  <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden" title="安全段(50%~100%)">
-                    <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${cGreen}%` }} />
+                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
+                    <span>周重置倒计时:</span>
+                    <span className="text-foreground font-medium">{formatDynamicCountdown(weeklyResetTime)}</span>
                   </div>
                 </div>
+              </div>
 
-                <div className="text-[10.5px] font-mono text-muted-foreground/85 truncate flex items-center justify-between">
-                  <span>下次重置倒计时:</span>
-                  <span className="font-semibold text-foreground">{formatDynamicCountdown(displaySnap.claude5h?.resetTime)}</span>
+              {/* 官方运行机制提示卡条 */}
+              <div className="sm:col-span-2 flex items-start gap-2 p-2 rounded-lg bg-blue-500/5 border border-blue-500/15 text-[10.5px] text-muted-foreground leading-relaxed">
+                <Info className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-foreground">Google 官方双配额体系：</span>
+                  5小时额度与每周总额度同时并行扣减。5小时短期额度防集中爆发（用尽后当前窗口期内暂停）；每周总额度控制全周总预算（用尽整周锁定直至下周一刷新）。
                 </div>
               </div>
             </div>

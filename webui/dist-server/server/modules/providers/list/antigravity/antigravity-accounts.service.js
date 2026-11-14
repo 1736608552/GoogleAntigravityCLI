@@ -49,6 +49,16 @@ function formatDynamicCountdown(isoString, fallbackText, _is5h = false, _percent
     }
     return '正常';
 }
+function getNextWeeklyResetIso() {
+    const now = new Date();
+    const dayOfWeek = now.getUTCDay(); // 0 是周日, 1 是周一... 6 是周六
+    let daysUntilMonday = (1 - dayOfWeek + 7) % 7;
+    if (daysUntilMonday === 0) {
+        daysUntilMonday = 7;
+    }
+    const nextMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + daysUntilMonday, 0, 0, 0, 0));
+    return nextMonday.toISOString();
+}
 async function fetchGoogleApi(url, options = {}) {
     // 遵循 19999 专有隔离守则：API 接口一律使用原生直连网络，绝不触碰 19999
     try {
@@ -65,6 +75,7 @@ class AntigravityAccountsService {
     quotaCacheTime = 0;
     accountQuotaSnapshots = new Map();
     inFlightQuotaFetches = new Map();
+    account5hResetTimes = new Map();
     getActiveEmail() {
         const activeAccountFiles = [
             path.join(resolveAntigravityStateDir(), 'active_account.json'),
@@ -410,32 +421,51 @@ class AntigravityAccountsService {
             modelsList[0];
         const geminiPct = geminiCandidate?.percent ?? 100;
         const geminiFraction = geminiCandidate?.remainingFraction ?? 1;
-        const geminiResetTime = geminiCandidate?.resetTime ?? null;
+        const rawGeminiResetTime = geminiCandidate?.resetTime ?? null;
         const geminiStatus = geminiCandidate?.status ?? 'healthy';
-        // 100% 纯实时直通 Google 官方上游模型配额，绝不进行任何本地篡改、虚构或条件覆盖
-        const geminiResetsIn = geminiResetTime ? formatDynamicCountdown(geminiResetTime) : '正常';
+        // 稳定锁定 5 小时滚动窗口周期截止时间，防止每次探测被 Google 的 now + 5h 重新推迟回 "4小时59分"
+        const nowTime = Date.now();
+        const stable5hKey = `${email}_gemini`;
+        const cached5hTime = this.account5hResetTimes.get(stable5hKey);
+        let resolvedGeminiResetTime = rawGeminiResetTime;
+        if (cached5hTime) {
+            const cachedTarget = new Date(cached5hTime).getTime();
+            if (cachedTarget > nowTime && cachedTarget - nowTime <= 5 * 3600 * 1000) {
+                resolvedGeminiResetTime = cached5hTime;
+            }
+            else {
+                if (rawGeminiResetTime)
+                    this.account5hResetTimes.set(stable5hKey, rawGeminiResetTime);
+            }
+        }
+        else if (rawGeminiResetTime) {
+            this.account5hResetTimes.set(stable5hKey, rawGeminiResetTime);
+        }
+        const geminiResetsIn = resolvedGeminiResetTime ? formatDynamicCountdown(resolvedGeminiResetTime) : '正常';
+        const nextWeeklyIso = getNextWeeklyResetIso();
+        const geminiWeeklyResetsIn = formatDynamicCountdown(nextWeeklyIso);
         const gemini5h = {
-            title: 'Gemini 实时算力',
+            title: 'Gemini 5小时额度',
             percent: geminiPct,
             used: parseFloat((100 - geminiPct).toFixed(1)),
             total: 100,
             remainingFraction: geminiFraction,
-            resetTime: geminiResetTime,
+            resetTime: resolvedGeminiResetTime,
             resetsIn: geminiResetsIn,
             resetText: geminiResetsIn,
-            description: 'Google 云端实时模型配额',
+            description: '5小时滚动突发配额',
             status: geminiStatus,
         };
         const geminiWeekly = {
-            title: 'Gemini 周期状态',
+            title: 'Gemini 每周总额度',
             percent: geminiPct,
             used: parseFloat((100 - geminiPct).toFixed(1)),
             total: 100,
             remainingFraction: geminiFraction,
-            resetTime: geminiResetTime,
-            resetsIn: geminiResetsIn,
-            resetText: geminiResetsIn,
-            description: 'Google 上游实时重置周期',
+            resetTime: nextWeeklyIso,
+            resetsIn: geminiWeeklyResetsIn,
+            resetText: geminiWeeklyResetsIn,
+            description: '每周全局上限硬预算',
             status: geminiStatus,
         };
         // 匹配 Claude / GPT 系列候选模型
@@ -445,37 +475,56 @@ class AntigravityAccountsService {
             modelsList.find((m) => m.modelId.includes('gpt'));
         const claudePct = claudeCandidate?.percent ?? 100;
         const claudeFraction = claudeCandidate?.remainingFraction ?? 1;
-        const claudeResetTime = claudeCandidate?.resetTime ?? null;
+        const rawClaudeResetTime = claudeCandidate?.resetTime ?? null;
         const claudeStatus = claudeCandidate?.status ?? 'healthy';
-        const claudeResetsIn = claudeResetTime ? formatDynamicCountdown(claudeResetTime) : '正常';
+        const stableClaudeKey = `${email}_claude`;
+        const cachedClaude5hTime = this.account5hResetTimes.get(stableClaudeKey);
+        let resolvedClaudeResetTime = rawClaudeResetTime;
+        if (cachedClaude5hTime) {
+            const cachedTarget = new Date(cachedClaude5hTime).getTime();
+            if (cachedTarget > nowTime && cachedTarget - nowTime <= 5 * 3600 * 1000) {
+                resolvedClaudeResetTime = cachedClaude5hTime;
+            }
+            else {
+                if (rawClaudeResetTime)
+                    this.account5hResetTimes.set(stableClaudeKey, rawClaudeResetTime);
+            }
+        }
+        else if (rawClaudeResetTime) {
+            this.account5hResetTimes.set(stableClaudeKey, rawClaudeResetTime);
+        }
+        const claudeResetsIn = resolvedClaudeResetTime ? formatDynamicCountdown(resolvedClaudeResetTime) : '正常';
+        const claudeWeeklyResetsIn = formatDynamicCountdown(nextWeeklyIso);
         const claude5h = {
-            title: 'Claude / GPT 实时算力',
+            title: 'Claude/GPT 5小时额度',
             percent: claudePct,
             used: parseFloat((100 - claudePct).toFixed(1)),
             total: 100,
             remainingFraction: claudeFraction,
-            resetTime: claudeResetTime,
+            resetTime: resolvedClaudeResetTime,
             resetsIn: claudeResetsIn,
             resetText: claudeResetsIn,
-            description: 'Claude / GPT 上游实时配额',
+            description: '5小时滚动突发配额',
             status: claudeStatus,
         };
         const claudeWeekly = {
-            title: 'Claude / GPT 周期状态',
+            title: 'Claude/GPT 每周总额度',
             percent: claudePct,
             used: parseFloat((100 - claudePct).toFixed(1)),
             total: 100,
             remainingFraction: claudeFraction,
-            resetTime: claudeResetTime,
-            resetsIn: claudeResetsIn,
-            resetText: claudeResetsIn,
-            description: 'Claude / GPT 上游重置周期',
+            resetTime: nextWeeklyIso,
+            resetsIn: claudeWeeklyResetsIn,
+            resetText: claudeWeeklyResetsIn,
+            description: '每周全局上限硬预算',
             status: claudeStatus,
         };
         // 毫秒级真实本地 SQLite 会话库统计 (完全真实离线数据，无任何虚构)
         let totalConversations = 0;
         let totalTurns = 0;
         let totalTokens = 0;
+        let weeklySteps = 0;
+        let fiveHourSteps = 0;
         try {
             const dbPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'conversation_summaries.db');
             if (fs.existsSync(dbPath)) {
@@ -484,6 +533,16 @@ class AntigravityAccountsService {
                 totalConversations = Number(row?.totalConvs || 0);
                 totalTurns = Number(row?.totalSteps || 0);
                 totalTokens = totalTurns * 180;
+                // 计算本周（从周一开始）与最近 5 小时的真实步数
+                const nowUtc = new Date();
+                const dayOfWeek = nowUtc.getUTCDay();
+                const diffToMonday = (dayOfWeek + 6) % 7;
+                const mondayDate = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate() - diffToMonday));
+                const mondayIsoStr = mondayDate.toISOString().slice(0, 10);
+                const wRow = db.prepare('SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= ?').get(mondayIsoStr);
+                weeklySteps = Number(wRow?.steps || 0);
+                const fiveHRow = db.prepare("SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= datetime('now', '-5 hours')").get();
+                fiveHourSteps = Number(fiveHRow?.steps || 0);
             }
         }
         catch (_) { }
@@ -515,7 +574,7 @@ class AntigravityAccountsService {
             tierType: isPro ? 'pro' : 'free',
             tierBadge,
             policyNote: isPro
-                ? 'Google AI Pro 特权生效中：实时对接 Google 官方云端配额，Gemini 与 Claude/GPT 共享池独立监控。'
+                ? 'Google AI Pro 双窗口配额生效中：5小时额度与每周总额度协同并行消耗，5h防短期突发，周额度控全局总预算。'
                 : 'Google AI 免费计划：实时对接 Google 官方云端配额。',
             projectId: projectInfo.projectId,
             models: modelsList,
@@ -524,6 +583,8 @@ class AntigravityAccountsService {
                 totalTurns,
                 totalTokens,
                 tokensFormatted,
+                weeklySteps,
+                fiveHourSteps,
             },
             updatedAt: Date.now(),
         };

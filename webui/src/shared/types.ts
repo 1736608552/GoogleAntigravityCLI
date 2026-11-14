@@ -330,6 +330,8 @@ export type AntigravityQuotaSnapshot = {
     totalTurns?: number;
     totalTokens?: number;
     tokensFormatted?: string;
+    weeklySteps?: number;
+    fiveHourSteps?: number;
   };
   updatedAt?: number;
 };
