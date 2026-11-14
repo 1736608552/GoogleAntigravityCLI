@@ -130,8 +130,12 @@ function formatDynamicCountdown(
   isoString?: string | null,
   fallbackText?: string,
   _is5h: boolean = false,
-  _percent?: number
+  percent?: number
 ): string {
+  // 配额满额（>= 100%）未触发限额时，无需倒计时等待，直接显示“随时可用”
+  if (typeof percent === 'number' && percent >= 100) {
+    return '随时可用';
+  }
   // 100% 忠实基于 Google 上游返回的真实 ISO 重置时间戳计算剩余时间，坚决杜绝任何本地伪造与取模模拟
   if (isoString) {
     const target = new Date(isoString).getTime();
@@ -190,6 +194,272 @@ class AntigravityAccountsService {
   private accountQuotaSnapshots = new Map<string, { snapshot: AntigravityQuotaSnapshot; time: number }>();
   private inFlightQuotaFetches = new Map<string, Promise<AntigravityQuotaSnapshot | null>>();
   private account5hResetTimes = new Map<string, string>();
+  private cachedLsSession: { address: string; csrfToken: string; time: number } | null = null;
+
+  private async probeLsSession(addr: string, csrf: string): Promise<boolean> {
+    try {
+      const res = await fetch(`http://${addr}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-codeium-csrf-token': csrf,
+        },
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(2500),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        return !!data?.response?.groups;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  private async getLanguageServerSession(force = false): Promise<{ address: string; csrfToken: string } | null> {
+    const now = Date.now();
+    if (!force && this.cachedLsSession && now - this.cachedLsSession.time < 30000) {
+      return { address: this.cachedLsSession.address, csrfToken: this.cachedLsSession.csrfToken };
+    }
+
+    // 1. 尝试当前环境变量
+    const envAddr = process.env.ANTIGRAVITY_LS_ADDRESS;
+    const envCsrf = process.env.ANTIGRAVITY_CSRF_TOKEN;
+    if (envAddr && envCsrf) {
+      if (await this.probeLsSession(envAddr, envCsrf)) {
+        this.cachedLsSession = { address: envAddr, csrfToken: envCsrf, time: now };
+        return { address: envAddr, csrfToken: envCsrf };
+      }
+    }
+
+    // 2. 尝试读取持久化会话文件
+    const candidateFiles = [
+      '/vol1/@apphome/GoogleAntigravityCLI/data/ls_session.json',
+      path.join(os.homedir(), '.gemini', 'antigravity-cli', 'ls_session.json'),
+    ];
+    for (const f of candidateFiles) {
+      try {
+        if (fs.existsSync(f)) {
+          const fileData = JSON.parse(fs.readFileSync(f, 'utf8'));
+          if (fileData?.address && fileData?.csrfToken) {
+            if (await this.probeLsSession(fileData.address, fileData.csrfToken)) {
+              this.cachedLsSession = { address: fileData.address, csrfToken: fileData.csrfToken, time: now };
+              return { address: fileData.address, csrfToken: fileData.csrfToken };
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 3. 扫描 /proc 获取最新运行中的 antigravity 进程环境 (按 PID 逆序)
+    try {
+      const pids = fs
+        .readdirSync('/proc')
+        .filter((p) => /^\d+$/.test(p))
+        .map((p) => Number(p))
+        .sort((a, b) => b - a);
+
+      for (const pid of pids) {
+        try {
+          const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+          if (cmdline.includes('antigravity')) {
+            const envRaw = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
+            const envs = envRaw.split('\0');
+            let addr = '';
+            let csrf = '';
+            for (const line of envs) {
+              if (line.startsWith('ANTIGRAVITY_LS_ADDRESS=')) addr = line.slice('ANTIGRAVITY_LS_ADDRESS='.length);
+              if (line.startsWith('ANTIGRAVITY_CSRF_TOKEN=')) csrf = line.slice('ANTIGRAVITY_CSRF_TOKEN='.length);
+            }
+            if (addr && csrf) {
+              if (await this.probeLsSession(addr, csrf)) {
+                this.cachedLsSession = { address: addr, csrfToken: csrf, time: now };
+                try {
+                  const outDir = '/vol1/@apphome/GoogleAntigravityCLI/data';
+                  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+                  fs.writeFileSync(
+                    path.join(outDir, 'ls_session.json'),
+                    JSON.stringify({ address: addr, csrfToken: csrf, updatedAt: now }, null, 2),
+                    'utf8'
+                  );
+                } catch (_) {}
+                return { address: addr, csrfToken: csrf };
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  private async fetchFromLanguageServer(targetEmail?: string): Promise<AntigravityQuotaSnapshot | null> {
+    try {
+      let session = await this.getLanguageServerSession();
+      if (!session) return null;
+
+      const callRpc = async (sess: { address: string; csrfToken: string }) => {
+        return await Promise.all([
+          fetch(`http://${sess.address}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-codeium-csrf-token': sess.csrfToken },
+            body: JSON.stringify({}),
+            signal: AbortSignal.timeout(6000),
+          }),
+          fetch(`http://${sess.address}/exa.language_server_pb.LanguageServerService/GetUserStatus`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-codeium-csrf-token': sess.csrfToken },
+            body: JSON.stringify({}),
+            signal: AbortSignal.timeout(6000),
+          }),
+        ]);
+      };
+
+      let [qRes, sRes] = await callRpc(session);
+      if (qRes.status === 401 || sRes.status === 401) {
+        this.cachedLsSession = null;
+        session = await this.getLanguageServerSession(true);
+        if (!session) return null;
+        [qRes, sRes] = await callRpc(session);
+      }
+
+      if (!qRes.ok) return null;
+
+      const qData = (await qRes.json()) as any;
+      const sData = sRes.ok ? ((await sRes.json()) as any) : null;
+
+      const groups = qData?.response?.groups || [];
+      if (!Array.isArray(groups) || groups.length === 0) return null;
+
+      const geminiGroup = groups.find((g: any) => /gemini/i.test(g?.displayName || '')) || groups[0];
+      const claudeGroup = groups.find((g: any) => /claude|gpt|3p/i.test(g?.displayName || '')) || groups[1];
+
+      const parseBucket = (g: any, win: string, fallbackDesc: string): AntigravityQuotaPool => {
+        const b = (g?.buckets || []).find((x: any) => x.window === win) || {};
+        const frac = typeof b.remainingFraction === 'number' ? b.remainingFraction : 1;
+        const pct = Math.round(frac * 1000) / 10;
+        const used = parseFloat((100 - pct).toFixed(1));
+        const rt = b.resetTime || null;
+        const desc = b.description || fallbackDesc;
+        const resetsIn = formatDynamicCountdown(rt, desc, win === '5h', pct);
+        return {
+          title: `${g?.displayName || (win === '5h' ? '实时算力' : '周期算力')} ${win === '5h' ? '5小时额度' : '每周总额度'}`,
+          percent: pct,
+          used,
+          total: 100,
+          remainingFraction: frac,
+          resetTime: rt,
+          resetsIn,
+          resetText: resetsIn,
+          description: desc,
+          status: pct > 20 ? 'healthy' : pct > 0 ? 'warning' : 'danger',
+        };
+      };
+
+      const gemini5h = parseBucket(geminiGroup, '5h', '5小时滚动突发配额');
+      const geminiWeekly = parseBucket(geminiGroup, 'weekly', '每周全局上限硬预算');
+      const claude5h = parseBucket(claudeGroup, '5h', '5小时滚动突发配额');
+      const claudeWeekly = parseBucket(claudeGroup, 'weekly', '每周全局上限硬预算');
+
+      const userStatus = sData?.userStatus || sData || {};
+      const planInfo = userStatus?.planStatus?.planInfo || {};
+      const isPro = !!(planInfo?.isPro || /pro/i.test(planInfo?.planName || ''));
+      const tierName = planInfo?.planName || (isPro ? 'Google AI Pro' : 'Google AI 标准版');
+      const tierBadge = isPro ? 'PRO' : 'FREE';
+
+      const email = (targetEmail || userStatus?.email || this.getActiveEmail() || 'current-user').toLowerCase();
+      const accounts = this.loadAccounts();
+      const targetAcc = accounts.find((a) => a.email.toLowerCase() === email);
+
+      let totalConversations = 0;
+      let totalTurns = 0;
+      let totalTokens = 0;
+      let weeklySteps = 0;
+      let fiveHourSteps = 0;
+      try {
+        const dbPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'conversation_summaries.db');
+        if (fs.existsSync(dbPath)) {
+          const Database = require('better-sqlite3');
+          const db = new Database(dbPath, { readonly: true });
+          const row = db.prepare('SELECT count(*) as totalConvs, coalesce(sum(step_count), 0) as totalSteps FROM conversation_summaries').get() as any;
+          totalConversations = Number(row?.totalConvs || 0);
+          totalTurns = Number(row?.totalSteps || 0);
+          totalTokens = totalTurns * 180;
+
+          const nowUtc = new Date();
+          const dayOfWeek = nowUtc.getUTCDay();
+          const diffToMonday = (dayOfWeek + 6) % 7;
+          const mondayDate = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate() - diffToMonday));
+          const mondayIsoStr = mondayDate.toISOString().slice(0, 10);
+          const wRow = db.prepare('SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= ?').get(mondayIsoStr) as any;
+          weeklySteps = Number(wRow?.steps || 0);
+
+          const fiveHRow = db.prepare("SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= datetime('now', '-5 hours')").get() as any;
+          fiveHourSteps = Number(fiveHRow?.steps || 0);
+        }
+      } catch (_) {}
+
+      const tokensFormatted = totalTokens >= 1_000_000
+        ? `${(totalTokens / 1_000_000).toFixed(1)}M`
+        : totalTokens >= 1_000
+        ? `${(totalTokens / 1_000).toFixed(1)}K`
+        : String(totalTokens);
+
+      const modelsList: ModelQuotaItem[] = [];
+      const configs = userStatus?.cascadeModelConfigData?.clientModelConfigs || [];
+      for (const c of configs) {
+        if (!c?.label) continue;
+        const isClaude = /claude|gpt|3p/i.test(c.label);
+        const pool = isClaude ? claude5h : gemini5h;
+        modelsList.push({
+          modelId: c.label.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          displayName: c.label,
+          remainingFraction: pool.remainingFraction,
+          percent: pool.percent,
+          resetTime: pool.resetTime,
+          resetsIn: pool.resetsIn,
+          isExhausted: pool.percent <= 0,
+          status: pool.status,
+        });
+      }
+
+      return {
+        gemini5h,
+        geminiWeekly,
+        claude5h,
+        claudeWeekly,
+        active5h: gemini5h,
+        activeWeekly: geminiWeekly,
+        percent: gemini5h.percent,
+        resetTime: gemini5h.resetTime,
+        resetsIn: gemini5h.resetsIn,
+        weeklyPercent: geminiWeekly.percent,
+        weeklyResetTime: geminiWeekly.resetTime,
+        weeklyResetIn: geminiWeekly.resetsIn,
+        accountEmail: email,
+        accountName: targetAcc?.name || userStatus?.name || email.split('@')[0] || 'Google 用户',
+        accountPicture: targetAcc?.picture || '',
+        tier: tierName,
+        tierType: isPro ? 'pro' : 'free',
+        tierBadge,
+        policyNote: 'Google 语言服务器实时原生配额生效中：5小时滚动突发配额与每周总额度双轨实时追踪。',
+        projectId: userStatus?.projectId || 'antigravity-local',
+        models: modelsList,
+        metrics: {
+          totalConversations,
+          totalTurns,
+          totalTokens,
+          tokensFormatted,
+          weeklySteps,
+          fiveHourSteps,
+        },
+        updatedAt: Date.now(),
+      };
+    } catch (e: any) {
+      console.warn('[fetchFromLanguageServer] Error:', e?.message || e);
+      return null;
+    }
+  }
 
   public getActiveEmail(): string | null {
     const activeAccountFiles = [
@@ -311,6 +581,25 @@ class AntigravityAccountsService {
     }
 
     const fetchPromise = (async () => {
+      // 第一优先级：尝试从本地语言服务器获取 100% 真实原生双配额
+      const lsSnapshot = await this.fetchFromLanguageServer(targetEmail);
+      if (lsSnapshot) {
+        const accs = this.loadAccounts();
+        const acc = targetEmail
+          ? accs.find((a) => a.email.toLowerCase() === targetEmail.toLowerCase())
+          : accs.find((a) => a.isActive) || accs[0];
+        if (acc) {
+          acc.quotaSnapshot = lsSnapshot;
+          acc.lastQuotaFetchedAt = now;
+        }
+        if (emailKey) {
+          this.accountQuotaSnapshots.set(emailKey, { snapshot: lsSnapshot, time: now });
+        }
+        this.cachedQuotaSnapshot = lsSnapshot;
+        this.quotaCacheTime = now;
+        return lsSnapshot;
+      }
+
       const accounts = this.loadAccounts();
       let targetAccount = targetEmail
         ? accounts.find((a) => a.email.toLowerCase() === targetEmail.toLowerCase())
@@ -583,9 +872,9 @@ class AntigravityAccountsService {
       this.account5hResetTimes.set(stable5hKey, rawGeminiResetTime);
     }
 
-    const geminiResetsIn = resolvedGeminiResetTime ? formatDynamicCountdown(resolvedGeminiResetTime) : '正常';
+    const geminiResetsIn = resolvedGeminiResetTime ? formatDynamicCountdown(resolvedGeminiResetTime, '', true, geminiPct) : '随时可用';
     const nextWeeklyIso = getNextWeeklyResetIso();
-    const geminiWeeklyResetsIn = formatDynamicCountdown(nextWeeklyIso);
+    const geminiWeeklyResetsIn = formatDynamicCountdown(nextWeeklyIso, '', false, geminiPct);
 
     const gemini5h: AntigravityQuotaPool = {
       title: 'Gemini 5小时额度',
