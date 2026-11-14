@@ -74,3 +74,12 @@ public/apks/
 webui/dist/apks/
 webui/public/apks/
 *.pid
+
+# User assets, private packages & local scratch scripts
+public/
+*.zip
+webui/*.zip
+fix_unbound_memory.sh
+scripts/port-3001-forwarder.js
+scripts/run-3001.sh
+webui/.agents/skills/fnos

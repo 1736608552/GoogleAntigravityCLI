@@ -749,6 +749,15 @@ router.post(
 );
 
 router.post(
+  '/antigravity/proxy/rotate',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rotateNodeAndVerify, getProxyHealthStatus } = await import('./list/antigravity/antigravity-proxy.js');
+    const success = await rotateNodeAndVerify(5);
+    res.json(createApiSuccessResponse({ ok: success, success, health: getProxyHealthStatus() }));
+  }),
+);
+
+router.post(
   '/antigravity/proxy/sleep',
   asyncHandler(async (_req: Request, res: Response) => {
     const { sleepProxyNow } = await import('./list/antigravity/antigravity-proxy.js');

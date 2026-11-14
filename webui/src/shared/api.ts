@@ -388,6 +388,7 @@ export const api = {
     },
     getAntigravityProxyLocations: () => get('/api/providers/antigravity/proxy/locations'),
     restartAntigravityProxy: () => post('/api/providers/antigravity/proxy/restart'),
+    rotateAntigravityProxyNode: () => post('/api/providers/antigravity/proxy/rotate'),
     sleepAntigravityProxy: () => post('/api/providers/antigravity/proxy/sleep'),
     wakeAntigravityProxy: () => post('/api/providers/antigravity/proxy/wake'),
     getAntigravityProxySettings: () => get('/api/providers/antigravity/proxy/settings'),

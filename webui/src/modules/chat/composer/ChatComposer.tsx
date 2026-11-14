@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon } from 'lucide-react';
+import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon, LanguagesIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -33,6 +33,7 @@ import PermissionRequestsBanner from '@/modules/chat/composer/PermissionRequests
 import TokenUsageSummary from '@/modules/chat/composer/TokenUsageSummary';
 import QueuedMessageCard from '@/modules/chat/composer/QueuedMessageCard';
 import BackgroundSendDialog from '@/modules/chat/composer/BackgroundSendDialog';
+import ReasoningTranslateDialog from './ReasoningTranslateDialog';
 import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessagePopover';
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
 import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
@@ -195,6 +196,7 @@ export default function ChatComposer({
   const { t } = useTranslation('chat');
   const fileDropdownRef = useRef<HTMLDivElement | null>(null);
   const selectedFileRef = useRef<HTMLDivElement | null>(null);
+  const [isTranslateDialogOpen, setIsTranslateDialogOpen] = useState(false);
   const commandMenuPosition = useMemo(() => {
     if (!isCommandMenuOpen) {
       return { top: 0, left: 16, bottom: 90 };
@@ -317,6 +319,11 @@ export default function ChatComposer({
       <BackgroundSendDialog
         prompt={backgroundSendPrompt}
         onResolve={onResolveBackgroundSendPrompt}
+      />
+
+      <ReasoningTranslateDialog
+        open={isTranslateDialogOpen}
+        onOpenChange={setIsTranslateDialogOpen}
       />
 
       {queuedDraft && (
@@ -468,6 +475,15 @@ export default function ChatComposer({
                   {slashCommandsCount}
                 </span>
               )}
+            </PromptInputButton>
+
+            <PromptInputButton
+              tooltip={{ content: '思考翻译设置' }}
+              onClick={() => setIsTranslateDialogOpen(true)}
+              aria-label="思考翻译设置"
+              className="hidden sm:inline-flex"
+            >
+              <LanguagesIcon className="h-4 w-4" />
             </PromptInputButton>
 
             {hasInput && (

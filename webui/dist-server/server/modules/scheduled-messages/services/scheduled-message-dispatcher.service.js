@@ -59,12 +59,16 @@ async function sendClaimedQueuedMessage(candidate, runtime) {
         content: message.content,
         options: { ...message.options, attachments: message.attachments },
     }, { runtime });
-    // The registry check and run reservation are separate operations. If a run
-    // wins that tiny race, put the turn back so the next poll tries again.
-    if (!result.started && result.error === 'A run was already in progress for this session.') {
+    // 防御性保护：只要未成功启动（不论是正巧有运行中任务、还是临时繁忙），绝不丢失用户消息，立即恢复以便重试
+    if (!result.started) {
+        console.warn('[ScheduledMessages] 派发排队消息未能立即启动，保留草稿等待下个时机:', {
+            sessionId: candidate.sessionId,
+            error: result.error,
+        });
         sessionDraftsDb.restoreQueuedMessage(candidate);
         return;
     }
+    console.log('[ScheduledMessages] ✅ 排队消息已成功启动执行:', candidate.sessionId);
     sessionDraftsDb.deleteEmptyDraft(candidate.userId, candidate.sessionId);
 }
 /**

@@ -62,6 +62,7 @@ import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
 import { initializeDatabase, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './modules/notifications/index.js';
+import { reasoningTranslateRoutes } from './modules/reasoning-translate/index.js';
 
 const __dirname = getModuleDirectory(import.meta.url);
 // The server source runs from /server, while the compiled output runs from /dist-server/server.
@@ -282,6 +283,12 @@ app.post('/api/proxy/restart', async (_req: Request, res: Response) => {
   res.json(restartProxy());
 });
 
+app.post('/api/proxy/rotate', async (_req: Request, res: Response) => {
+  const { rotateNodeAndVerify, getProxyHealthStatus } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
+  const success = await rotateNodeAndVerify(5);
+  res.json({ ok: success, success, health: getProxyHealthStatus() });
+});
+
 app.get('/api/system/settings', async (_req: Request, res: Response) => {
   const { readUrnAuth, getProxyToggle } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
   const urn = readUrnAuth();
@@ -418,6 +425,7 @@ app.use('/api/scheduled-messages', authenticateToken, scheduledMessagesRoutes);
 app.use('/api/agent', agentRoutes);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
+app.use('/api/reasoning-translate', authenticateToken, reasoningTranslateRoutes);
 
 // Serve pre-compressed .gz assets when requested with Accept-Encoding: gzip
 // Reduces 3.1MB bundle to 900KB, boosting mobile/remote load speeds by 4-5x
@@ -628,10 +636,22 @@ async function startServer() {
             startEnabledPluginServers().catch(err => {
                 console.error('[Plugins] Error during startup:', err.message);
             });
+
+            // 初始化 URnetwork 代理健康看门狗（若代理处于运行态，自动启动每10秒探活与断网秒级换IP）
+            try {
+                const { isSocksListening, getProxyToggle, startProxyHealthWatchdog } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
+                if (getProxyToggle() === 'yes' && isSocksListening(19999)) {
+                    startProxyHealthWatchdog();
+                }
+            } catch (_) {}
         });
 
         // Clean up plugin processes on shutdown
         const shutdownRuntimeServices = async () => {
+            try {
+                const { stopProxyHealthWatchdog } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
+                stopProxyHealthWatchdog();
+            } catch (_) {}
             try {
                 await closeSessionsWatcher();
             } catch (err) {

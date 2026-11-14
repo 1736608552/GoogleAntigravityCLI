@@ -66,6 +66,17 @@ export type UrnBalanceDetails = {
   error?: string;
 };
 
+export type ProxyHealthState = {
+  lastCheckTime: number;
+  healthy: boolean;
+  latencyMs: number;
+  message: string;
+  rotateCount: number;
+  lastRotatedTime: number;
+  watchdogActive: boolean;
+  isRotating?: boolean;
+};
+
 export type UrnProxyStatus = {
   enabled: boolean;
   mode: 'yes' | 'no';
@@ -84,6 +95,7 @@ export type UrnProxyStatus = {
   idleState: 'active' | 'idle' | 'sleeping';
   idleSecondsRemaining: number;
   activeTurns: number;
+  health?: ProxyHealthState;
 };
 
 export function readUrnAuth(): UrnAuthConfig {
@@ -112,8 +124,8 @@ export function readUrnAuth(): UrnAuthConfig {
             map[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
           }
         }
-        const userAuth = map['URN_USER_AUTH'] || '438889797@qq.com';
-        const password = map['URN_PASSWORD'] || 'Xiaoliguang520.';
+        const userAuth = map['URN_USER_AUTH'] || process.env.URN_DEFAULT_USER || '';
+        const password = map['URN_PASSWORD'] || process.env.URN_DEFAULT_PASS || '';
         return {
           userAuth,
           password,
@@ -132,17 +144,14 @@ export function readUrnAuth(): UrnAuthConfig {
 
   return {
     ...fallback,
-    userAuth: '438889797@qq.com',
-    password: 'Xiaoliguang520.',
-    hasPassword: true,
   };
 }
 
 export function writeUrnAuth(vals: Partial<UrnAuthConfig>): void {
   const cur = readUrnAuth();
-  // 防御性设计：如果传入账号或密码为空，自动保留已有凭据或默认用户凭据，严防被清空
-  const safeUserAuth = (vals.userAuth && vals.userAuth.trim()) ? vals.userAuth.trim() : (cur.userAuth || '438889797@qq.com');
-  const safePassword = (vals.password && vals.password.trim()) ? vals.password.trim() : (cur.password || 'Xiaoliguang520.');
+  // 防御性设计：如果传入账号或密码为空，自动保留已有凭据，严防被清空
+  const safeUserAuth = (vals.userAuth && vals.userAuth.trim()) ? vals.userAuth.trim() : (cur.userAuth || '');
+  const safePassword = (vals.password && vals.password.trim()) ? vals.password.trim() : (cur.password || '');
   const v = { ...cur, ...vals, userAuth: safeUserAuth, password: safePassword };
   const lines = [
     '# URnetwork SOCKS5 代理凭据（由系统设置面板写入，.gitignore 忽略不外传）',
@@ -237,6 +246,7 @@ export function getProxyStatus(): UrnProxyStatus {
     idleState: currentIdleState,
     idleSecondsRemaining,
     activeTurns: activeTurnsCount,
+    health: getProxyHealthStatus(),
   };
 }
 
@@ -281,6 +291,7 @@ export function startUrnSocksInstant(): { ok: boolean; message: string; socksLis
   }
 
   if (isSocksListening(19999)) {
+    startProxyHealthWatchdog();
     return { ok: true, message: 'SOCKS5 代理已在运行中', socksListening: true };
   }
 
@@ -312,6 +323,7 @@ export function startUrnSocksInstant(): { ok: boolean; message: string; socksLis
     const start = Date.now();
     while (Date.now() - start < 3000) {
       if (isSocksListening(19999)) {
+        startProxyHealthWatchdog();
         return { ok: true, message: 'SOCKS5 代理已按需瞬间启动', socksListening: true };
       }
       execFileSync('sleep', ['0.15']);
@@ -321,6 +333,9 @@ export function startUrnSocksInstant(): { ok: boolean; message: string; socksLis
   }
 
   const listening = isSocksListening(19999);
+  if (listening) {
+    startProxyHealthWatchdog();
+  }
   return { ok: listening, message: listening ? 'SOCKS5 代理已按需启动' : '代理启动中...', socksListening: listening };
 }
 
@@ -378,6 +393,7 @@ export async function cleanupCloudSocksClients(): Promise<number> {
 }
 
 export function stopUrnSocksInstant(): { ok: boolean; message: string; socksListening: boolean } {
+  stopProxyHealthWatchdog();
   try {
     let pids: number[] = [];
     try {
@@ -475,6 +491,9 @@ export function setProxyToggle(mode: 'yes' | 'no' | string): 'yes' | 'no' {
     } else {
       // 无对话时保持休眠状态，等到对话时再按需连接
       idleState = 'sleeping';
+      if (isSocksListening(19999)) {
+        startProxyHealthWatchdog();
+      }
       console.log('[Scale-to-Zero] ⚙️ 用户切换为【代理状态】：按需连接模式就绪（对话时唤醒，结束60秒优雅回收）');
     }
   }
@@ -618,6 +637,198 @@ export async function testProxyConnectivity(targetMode?: 'yes' | 'no'): Promise<
   });
 }
 
+// --------------------------- URNETWORK WATCHDOG & AUTO-HEALING ---------------------------
+
+let proxyHealthWatchdogTimer: NodeJS.Timeout | null = null;
+let isHealthCheckingOrRotating = false;
+
+export const proxyHealthState: ProxyHealthState = {
+  lastCheckTime: 0,
+  healthy: false,
+  latencyMs: 0,
+  message: '尚未开始探活',
+  rotateCount: 0,
+  lastRotatedTime: 0,
+  watchdogActive: false,
+  isRotating: false,
+};
+
+export function getProxyHealthStatus(): ProxyHealthState {
+  const listening = isSocksListening(19999);
+  return {
+    ...proxyHealthState,
+    watchdogActive: Boolean(proxyHealthWatchdogTimer),
+    healthy: listening && proxyHealthState.healthy,
+  };
+}
+
+/**
+ * 发现不通马上换 IP，并且更换节点后立马 ping 验证是否通，直到连通或重试达到上限
+ */
+export async function rotateNodeAndVerify(maxAttempts = 5): Promise<boolean> {
+  if (proxyHealthState.isRotating) {
+    console.log('[URnetwork Watchdog] 🔄 当前已有节点轮换任务在执行中，避免重复触发');
+    return false;
+  }
+
+  proxyHealthState.isRotating = true;
+  proxyHealthState.healthy = false;
+  console.warn(`[URnetwork Watchdog] ⚠️ 发现当前 IP 不通或触发轮换，立即执行节点轮换切换出口 IP...`);
+
+  try {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      proxyHealthState.rotateCount++;
+      proxyHealthState.lastRotatedTime = Date.now();
+      console.log(`[URnetwork Watchdog] 🔄 [换IP 第 ${attempt}/${maxAttempts} 次] 正在终止旧会话并重连新住宅节点...`);
+
+      // 1. 强制杀死旧的 urnetwork-socks 进程，确保彻底断开旧的节点链路
+      try {
+        let pids: number[] = [];
+        try {
+          const out = execFileSync('pgrep', ['-f', 'urnetwork/urnetwork-socks'], { encoding: 'utf8' });
+          pids = out.trim().split('\n').filter(Boolean).map(Number);
+        } catch (_) {}
+
+        for (const pid of pids) {
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch (_) {}
+        }
+      } catch (_) {}
+
+      // 异步通知官方云端注销旧客户端会话（避免被分配到同一挂起设备）
+      cleanupCloudSocksClients().catch(() => {});
+
+      // 等待 150ms 端口释放
+      await new Promise((r) => setTimeout(r, 150));
+
+      // 2. 重新拉起 SOCKS5 代理进程分配全新节点
+      const urn = readUrnAuth();
+      const socksBin = '/vol1/@apphome/GoogleAntigravityCLI/urnetwork/urnetwork-socks';
+      const logFile = '/vol1/@apphome/GoogleAntigravityCLI/urnetwork/socks.log';
+      const args = [
+        `--addr="127.0.0.1:19999"`,
+        `--user-auth="${urn.userAuth}"`,
+        `--password="${urn.password}"`,
+        `--country="${urn.country || 'United States'}"`,
+        urn.region ? `--region="${urn.region}"` : '',
+        urn.city ? `--city="${urn.city}"` : '',
+        urn.providerId ? `--provider-id="${urn.providerId}"` : '',
+      ].filter(Boolean).join(' ');
+
+      exec(`nohup "${socksBin}" ${args} >> "${logFile}" 2>&1 &`);
+
+      // 3. 轮询等待端口就绪（最多等待 3.5 秒）
+      let ready = false;
+      const startWait = Date.now();
+      while (Date.now() - startWait < 3500) {
+        if (isSocksListening(19999)) {
+          ready = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      if (!ready) {
+        console.warn(`[URnetwork Watchdog] ⚠️ 第 ${attempt} 次换节点后端口未能及时就绪，继续尝试轮换...`);
+        continue;
+      }
+
+      // 等待 250ms 让 BringYour P2P 住宅网络握手就绪
+      await new Promise((r) => setTimeout(r, 250));
+
+      // 4. 【核心要求：更换节点立马要 ping 是否通】
+      console.log(`[URnetwork Watchdog] ⚡ 新节点已启动，立即（0延迟）执行连通性 Ping 验证...`);
+      const pingRes = await testProxyConnectivity('yes');
+      proxyHealthState.lastCheckTime = Date.now();
+      proxyHealthState.latencyMs = pingRes.latencyMs;
+      proxyHealthState.message = pingRes.message;
+
+      if (pingRes.success) {
+        proxyHealthState.healthy = true;
+        console.log(`[URnetwork Watchdog] ✅ 节点切换成功且验证通畅！新 IP 延迟: ${pingRes.latencyMs}ms (${pingRes.message})`);
+        return true;
+      } else {
+        console.warn(`[URnetwork Watchdog] ❌ 第 ${attempt} 次换节点后 Ping 验证仍未通 (${pingRes.message}, ${pingRes.latencyMs}ms)，立即更换下一个节点！`);
+      }
+    }
+
+    console.error(`[URnetwork Watchdog] 🚨 已连续尝试 ${maxAttempts} 次换节点，未能获得通畅 IP`);
+    return false;
+  } finally {
+    proxyHealthState.isRotating = false;
+  }
+}
+
+/**
+ * 周期性探活任务：检查当前运行中的代理 IP 是否畅通，不通则立即换 IP
+ */
+async function runHealthCheckTick(): Promise<void> {
+  const toggle = getProxyToggle();
+  // 若当前处于直连模式或未在监听，不进行探活
+  if (toggle !== 'yes' || !isSocksListening(19999)) {
+    return;
+  }
+
+  // 防并发穿透：若正在探活或正在换节点，跳过本次周期
+  if (isHealthCheckingOrRotating || proxyHealthState.isRotating) {
+    return;
+  }
+
+  isHealthCheckingOrRotating = true;
+  try {
+    const pingRes = await testProxyConnectivity('yes');
+    proxyHealthState.lastCheckTime = Date.now();
+    proxyHealthState.latencyMs = pingRes.latencyMs;
+    proxyHealthState.message = pingRes.message;
+
+    if (pingRes.success) {
+      proxyHealthState.healthy = true;
+      console.log(`[URnetwork Watchdog] 🟢 10秒周期探活通过: 节点通畅 (HTTP ${pingRes.httpCode || 204}, ${pingRes.latencyMs}ms)`);
+    } else {
+      console.warn(`[URnetwork Watchdog] ⚠️ 10秒周期探活失败 (${pingRes.message}, ${pingRes.latencyMs}ms)，IP 不通，马上换 IP！`);
+      await rotateNodeAndVerify(5);
+    }
+  } catch (err: any) {
+    console.warn(`[URnetwork Watchdog] 探活异常:`, err?.message || err);
+    await rotateNodeAndVerify(5);
+  } finally {
+    isHealthCheckingOrRotating = false;
+  }
+}
+
+/**
+ * 启动代理探活看门狗（运行时严格每 10 秒 ping 一次）
+ */
+export function startProxyHealthWatchdog(): void {
+  if (proxyHealthWatchdogTimer) return;
+  proxyHealthState.watchdogActive = true;
+  console.log(`[URnetwork Watchdog] 🛡️ 启动 URnetwork 代理【每10秒探活】与【断网秒级换IP】看门狗`);
+
+  // 启动 1 秒后立即执行首次探活
+  setTimeout(() => {
+    void runHealthCheckTick();
+  }, 1000);
+
+  proxyHealthWatchdogTimer = setInterval(() => {
+    void runHealthCheckTick();
+  }, 10_000); // 严格每 10 秒执行一次
+
+  proxyHealthWatchdogTimer.unref?.();
+}
+
+/**
+ * 停止代理探活看门狗（休眠或直连时停止，零消耗）
+ */
+export function stopProxyHealthWatchdog(): void {
+  if (proxyHealthWatchdogTimer) {
+    clearInterval(proxyHealthWatchdogTimer);
+    proxyHealthWatchdogTimer = null;
+    proxyHealthState.watchdogActive = false;
+    console.log(`[URnetwork Watchdog] ⏹️ 代理已休眠或切换直连，已暂停 10 秒探活看门狗`);
+  }
+}
+
 /**
  * 确保 SOCKS5 代理处于唤醒并监听状态（按需唤醒 Scale-up）
  * 供 AntigravityRuntimeProvider 与主动连接时调用
@@ -643,8 +854,12 @@ export async function ensureProxyAwake(): Promise<boolean> {
   if (!isSocksListening(19999)) {
     console.log('[Scale-to-Zero] ⚡ 收到对话模型调用请求，按需自动唤醒 SOCKS5 代理...');
     const res = startUrnSocksInstant();
+    if (res.socksListening) {
+      startProxyHealthWatchdog();
+    }
     return res.socksListening;
   }
+  startProxyHealthWatchdog();
   return true;
 }
 
@@ -737,6 +952,9 @@ export async function wakeProxyNow(): Promise<{ ok: boolean; message: string }> 
 
   const res = startUrnSocksInstant();
   idleState = 'active';
+  if (res.ok) {
+    startProxyHealthWatchdog();
+  }
   return { ok: res.ok, message: res.ok ? '代理已成功唤醒就绪' : '唤醒失败: ' + res.message };
 }
 

@@ -6,7 +6,7 @@ import type { ChatMessage, ClaudePermissionSuggestion, PermissionGrantResult, LL
 import { formatUsageLimitText, stripProposedPlanEnvelope } from '@/modules/chat/utils/chatFormatting';
 import { ToolRenderer, ToolErrorDisplay, SubagentPanel, shouldHideToolResult } from '@/modules/chat/tools';
 import { LLMProviderLogo } from '@/shared/ui';
-import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/modules/chat/transcript/Reasoning';
+import { Reasoning, ReasoningContent, ReasoningTrigger, ReasoningTranslatedBody } from '@/modules/chat/transcript/Reasoning';
 import ChatMessageImages from '@/modules/chat/transcript/ChatMessageImages';
 import ChatMessageFiles from '@/modules/chat/transcript/ChatMessageFiles';
 import { Markdown } from '@/modules/chat/transcript/Markdown';
@@ -292,9 +292,14 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
               <Reasoning defaultOpen={isExporting}>
                 <ReasoningTrigger />
                 <ReasoningContent>
-                  <Markdown className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert">
-                    {message.content}
-                  </Markdown>
+                  <ReasoningTranslatedBody
+                    rawText={String(message.content || '')}
+                    renderContent={(text) => (
+                      <Markdown className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert">
+                        {text}
+                      </Markdown>
+                    )}
+                  />
                   {!isExporting && (
                     <div className="mt-3 flex items-center text-[11px]">
                       <MessageCopyControl content={String(message.content || '')} messageType="assistant" />
@@ -309,9 +314,9 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                   <Reasoning className="mb-3" defaultOpen={false}>
                     <ReasoningTrigger />
                     <ReasoningContent>
-                      <div className="whitespace-pre-wrap">
-                        {message.reasoning}
-                      </div>
+                      <ReasoningTranslatedBody
+                        rawText={String(message.reasoning || '')}
+                      />
                     </ReasoningContent>
                   </Reasoning>
                 )}

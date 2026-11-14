@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { BrainIcon, ChevronDownIcon } from 'lucide-react';
+import { BrainIcon, ChevronDownIcon, ChevronRightIcon, LanguagesIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '@/shared/utils';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, Shimmer } from '@/shared/ui';
+import { useReasoningBlockTranslate, isMostlyChinese } from '../hooks/useReasoningTranslate';
+import ReasoningTranslateDialog from '../composer/ReasoningTranslateDialog';
 
 /* ─── Context ────────────────────────────────────────────────────── */
 
@@ -211,3 +213,100 @@ export const ReasoningContent = React.memo<ReasoningContentProps>(
   )
 );
 ReasoningContent.displayName = 'ReasoningContent';
+
+/* ─── ReasoningTranslatedBody (中文增量翻译与原文折叠) ─────────────────── */
+
+export type ReasoningTranslatedBodyProps = {
+  rawText: string;
+  isStreaming?: boolean;
+  className?: string;
+  renderContent?: (text: string) => React.ReactNode;
+};
+
+export const ReasoningTranslatedBody = React.memo<ReasoningTranslatedBodyProps>(
+  ({ rawText, isStreaming = false, className, renderContent }) => {
+    const { translatedText, isTranslating } = useReasoningBlockTranslate(rawText, isStreaming);
+    const [showOriginal, setShowOriginal] = React.useState(false);
+    const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+
+    const hasTranslation = Boolean(
+      translatedText &&
+      translatedText.trim() !== rawText.trim() &&
+      isMostlyChinese(translatedText)
+    );
+    const displayText = hasTranslation ? translatedText! : rawText;
+
+    return (
+      <div className={cn('space-y-2', className)}>
+        {hasTranslation ? (
+          <div className="flex items-center justify-between text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            <div className="flex items-center gap-1.5">
+              <LanguagesIcon className="h-3 w-3" />
+              <span>已实时翻译为中文呈现</span>
+              {isTranslating && <span className="animate-pulse">（翻译更新中...）</span>}
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDialogOpen(true);
+              }}
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline transition-colors px-1"
+            >
+              设置
+            </button>
+          </div>
+        ) : !isMostlyChinese(rawText) ? (
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground pb-1">
+            <span>英文推理过程</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDialogOpen(true);
+              }}
+              className="flex items-center gap-1 text-xs text-primary hover:underline transition-colors"
+            >
+              <LanguagesIcon className="h-3 w-3" />
+              <span>翻译设置</span>
+            </button>
+          </div>
+        ) : null}
+
+        {renderContent ? (
+          renderContent(displayText)
+        ) : (
+          <div className="whitespace-pre-wrap">{displayText}</div>
+        )}
+
+        {/* 展开/收起英文原文 */}
+        {hasTranslation && (
+          <div className="mt-3 pt-2 border-t border-border/40">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowOriginal(!showOriginal);
+              }}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-1"
+            >
+              <ChevronRightIcon
+                className={cn('h-3.5 w-3.5 transition-transform duration-200', showOriginal && 'rotate-90')}
+              />
+              <span>{showOriginal ? '收起英文原文' : `展开英文原文 (${rawText.length} 字符)`}</span>
+            </button>
+
+            {showOriginal && (
+              <div className="mt-2 rounded-md bg-muted/40 border border-border/50 p-3 text-xs font-mono text-muted-foreground whitespace-pre-wrap select-text leading-relaxed">
+                {rawText}
+              </div>
+            )}
+          </div>
+        )}
+
+        <ReasoningTranslateDialog open={isDialogOpen} onOpenChange={setIsDialogOpen} />
+      </div>
+    );
+  }
+);
+ReasoningTranslatedBody.displayName = 'ReasoningTranslatedBody';
