@@ -1704,15 +1704,33 @@ HAGEMI.boot = async function boot(send, options = {}) {
     } catch {}
 
     const hasCustomConfig = Boolean(ai.apiKey || ai.apiBaseUrl);
+    const isOfficial = !hasCustomConfig || ai.model === 'official' || (!ai.apiKey && !ai.apiBaseUrl);
 
-    // 如果开启了 AI 动态吐槽，或显式触发 AI 吐槽
-    if (forceAi || (ai.enabled && hasCustomConfig)) {
+    // 1. 如果用户选择“官方原生模式”或未配置第三方 API，直接触发官方原生元气台词（100% 成功，0 门槛）
+    if (isOfficial) {
       if (isAiGenerating) return;
+      const officialLines = [
+        '今天也要元气满满地敲代码喵！',
+        '百万上下文在手，天下我有喵~',
+        '坐久了记得起来伸个懒腰，喝口温水喵！',
+        '键盘火花带闪电，Bug全部逃不掉！',
+        '本喵的小鱼干储备超充沛，随时为你护航喵~',
+        '悄悄告诉你，本喵最喜欢看你认真写代码了~',
+        '盯——有什么有趣的难题需要本喵参谋吗？',
+        '主人写代码的样子真帅气喵！',
+        '遇到报错别慌，本喵随时为你加油打气喵！',
+        '今天代码写得超顺，继续保持元气节奏喵~'
+      ];
+      const pick = officialLines[Math.floor(Math.random() * officialLines.length)];
+      animator.override('gift', 1800);
+      fx.burst('notes', STAGE.cx, 380, 8);
+      startSpeech({ text: `✨ ${pick}`, mood: 'happy', ms: 4000 });
+      return;
+    }
 
-      if (!ai.apiKey && !ai.apiBaseUrl) {
-        startSpeech({ text: '请先在哈基米设置中填入 API 接口与 Key 喵~', mood: 'sad', ms: 3500 });
-        return;
-      }
+    // 2. 第三方大模型接管模式
+    if (forceAi || ai.enabled) {
+      if (isAiGenerating) return;
 
       isAiGenerating = true;
       animator.override('thinking', 3000);
@@ -1727,17 +1745,19 @@ HAGEMI.boot = async function boot(send, options = {}) {
         }
 
         let targetModel = (ai.customModel || '').trim();
-        if (!targetModel && ai.model && ai.model !== 'auto' && ai.model !== 'custom') {
+        if (!targetModel && ai.model && ai.model !== 'auto' && ai.model !== 'custom' && ai.model !== 'official') {
           targetModel = ai.model.trim();
         }
 
+        // 防呆检测：如果使用 SiliconFlow 等第三方地址，且未指定模型或误设为 gemini，自动纠偏
+        if (endpoint.includes('siliconflow') && (!targetModel || targetModel.includes('gemini'))) {
+          targetModel = (ai.customModel || 'Qwen/Qwen3.5-4B').trim();
+        }
+
         if (!targetModel) {
-          if (hasCustomConfig) {
-            startSpeech({ text: '请在哈基米设置中填入您 API 支持的模型名称喵~', mood: 'sad', ms: 4000 });
-            isAiGenerating = false;
-            return;
-          }
-          targetModel = 'gemini-3.8-flash';
+          startSpeech({ text: '请在哈基米设置中填入您 API 支持的模型名称喵~', mood: 'sad', ms: 4000 });
+          isAiGenerating = false;
+          return;
         }
 
         const systemPrompt = `你是一只陪伴主人写代码的二次元猫娘桌面宠物“哈基米（Hagemi）”。性格活泼可爱、喜欢吃小鱼干、口癖带“喵~”。
@@ -1962,24 +1982,16 @@ ${ai.personaExtra ? `主人补充设定：${ai.personaExtra}` : ''}`;
     field('API 接口地址', textInput(ai.apiBaseUrl, 'https://... (默认系统)', false, value => patch({ ai: { apiBaseUrl: value } })));
     field('API 密钥 (Key)', textInput(ai.apiKey, 'sk-... (留空走系统)', true, value => patch({ ai: { apiKey: value } })));
     
-    // 仅列出用户当前真实拥有、开箱即用的系统模型
-    const defaultModels = [
-      ['auto', '自动跟随当前会话 (gemini-3.8-flash)'],
-      ['custom', '使用自定义模型名称 (见下方输入框)'],
-      ...modelChoices.filter(m => !m.includes('2.5')).map(label => [label, label])
+    // 清晰划分官方原生模式与第三方大模型接管模式
+    const modelOptions = [
+      ['official', '✨ 官方原生元气陪伴（开箱即用，免配置）'],
+      ['custom', '🤖 第三方大模型接管（需下方填Key和模型）'],
+      ['gemini-3.8-flash', 'Google Gemini 3.8 Flash（需配Gemini Key）'],
     ];
-    const seen = new Set();
-    const finalModelOptions = [];
-    for (const [val, label] of defaultModels) {
-      if (!seen.has(val)) {
-        seen.add(val);
-        finalModelOptions.push([val, label]);
-      }
+    if (ai.model && !modelOptions.some(m => m[0] === ai.model)) {
+      modelOptions.push([ai.model, ai.model]);
     }
-    if (ai.model && !seen.has(ai.model) && !ai.model.includes('2.5')) {
-      finalModelOptions.unshift([ai.model, ai.model]);
-    }
-    field(ui.ai_model || '推理模型', select(ai.model || 'auto', finalModelOptions, value => patch({ ai: { model: value } })));
+    field(ui.ai_model || '推理模型', select(ai.model || 'official', modelOptions, value => patch({ ai: { model: value } })));
     field('自定义模型名', textInput(ai.customModel, '输入您 API 支持的模型名称', false, value => patch({ ai: { customModel: value } })));
 
     // 专属 API 连通性测试按钮与实时诊断容器
