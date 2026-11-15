@@ -6,6 +6,7 @@ import type { ProjectWorkspaceShellProps } from '@/shared/types';
 import ProjectCommandPalette from '@/modules/project-workspace/ProjectCommandPalette';
 import ProjectMainRegion from '@/modules/project-workspace/ProjectMainRegion';
 import ProjectSidebarRegion from '@/modules/project-workspace/ProjectSidebarRegion';
+import { HagemiOverlay } from '@/modules/pet';
 
 /** Rendered by ProjectWorkspaceRoute to lay out the workspace sidebar, main region and global overlays. */
 function ProjectWorkspaceShell({
@@ -33,6 +34,7 @@ function ProjectWorkspaceShell({
 
       <ProjectCommandPalette />
       <QuickSettingsPanel />
+      <HagemiOverlay />
     </div>
   );
 }

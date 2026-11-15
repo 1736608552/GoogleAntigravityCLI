@@ -27,6 +27,55 @@ function notifyListeners(quota: any) {
   listeners.forEach((listener) => listener(unwrapped));
 }
 
+export function cleanAndTranslateResetDesc(text?: string | null): string {
+  if (!text) return '正常';
+  const s = String(text).trim();
+  if (!s || s === '正常' || s === '随时可用' || s === '即将重置') return s;
+
+  // 1. 匹配 Google 官方描述中的刷新时间: "(...) fully refresh in 3 hours" / "reset in 2 hours" / "access again in 1 hour"
+  const mRefresh = s.match(/(?:fully\s+refresh|resets?|access\s+again)\s+in\s+(\d+)\s*(?:hours?|h)(?:\s*(?:and\s*)?(\d+)\s*(?:min(?:ute)?s?|m))?/i);
+  if (mRefresh) {
+    const h = mRefresh[1];
+    const m = mRefresh[2];
+    if (h && m) return `${h}小时 ${m}分钟`;
+    if (h) return `${h}小时`;
+  }
+  const mMinOnly = s.match(/(?:fully\s+refresh|resets?|access\s+again)\s+in\s+(\d+)\s*(?:min(?:ute)?s?|m)/i);
+  if (mMinOnly) {
+    return `${mMinOnly[1]}分钟`;
+  }
+
+  // 2. 英文天数 + 小时: "6 days, 7 hours" / "6 days"
+  const mDayHour = s.match(/(\d+)\s*days?(?:\s*,?\s*(\d+)\s*hours?)?/i);
+  if (mDayHour) {
+    const d = mDayHour[1];
+    const h = mDayHour[2];
+    return h && h !== '0' ? `${d}天 ${h}小时` : `${d}天`;
+  }
+
+  // 3. 英文小时 + 分钟: "4 hours, 30 minutes" / "4h 30m" / "4 hours" / "30 minutes"
+  const mHourMin = s.match(/(?:(\d+)\s*(?:hours?|h))?\s*,?\s*(?:(\d+)\s*(?:min(?:ute)?s?|m))?/i);
+  if (mHourMin && (mHourMin[1] || mHourMin[2])) {
+    const h = mHourMin[1];
+    const m = mHourMin[2];
+    if (h && m) return `${h}小时 ${m}分钟`;
+    if (h) return `${h}小时`;
+    if (m) return `${m}分钟`;
+  }
+
+  // 4. 中文天/小时/分钟已正常的情况，直接返回
+  if (/(\d+)\s*天|(\d+)\s*小时|(\d+)\s*分钟/.test(s)) {
+    return s;
+  }
+
+  // 5. 其他英文提示保底翻译
+  if (/limit|quota|refresh|used|reach/i.test(s)) {
+    return '即将重置';
+  }
+
+  return s;
+}
+
 export function formatDynamicCountdown(
   isoString?: string | null,
   fallbackText?: string,
@@ -52,7 +101,7 @@ export function formatDynamicCountdown(
   }
 
   if (fallbackText && !fallbackText.includes('查询中') && !fallbackText.includes('计算中') && !fallbackText.includes('即将')) {
-    return fallbackText;
+    return cleanAndTranslateResetDesc(fallbackText);
   }
 
   return '正常';
@@ -60,7 +109,8 @@ export function formatDynamicCountdown(
 
 export function formatPreciseTimeTag(str?: string | null): string {
   if (!str) return '即将重置';
-  const s = String(str).trim();
+  const cleanStr = cleanAndTranslateResetDesc(str);
+  const s = String(cleanStr).trim();
   if (s === '即将重置' || s.includes('即将') || s.includes('计算中') || s.includes('查询中')) return '即将重置';
   
   // 1. Chinese day + hour: "6天 23小时" / "6天"
