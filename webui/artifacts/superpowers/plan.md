@@ -1,19 +1,25 @@
-# 实施计划：为桌宠设置面板新增 API 与 Key 输入，并补全推理模型列表
+# 取消 URnetwork SOCKS5 代理 10s Ping 规划方案 (Superpowers Plan)
 
-## 1. 用户诉求与痛点
-- 用户在【哈基米设置】面板中看到了【AI 动态吐槽】与【推理模型】等配置；
-- 但由于开源项目原作者原本是为本地 CLI 旁路设计的，**原版代码中完全缺失了 API 接口地址与 API Key 的输入框**，且【推理模型】下拉列表未注入可用模型；
-- 用户希望知道在哪里输入 API 和 Key，并能真正配置和使用 AI 模型。
+## 1. 目标
+响应用户需求：“URnetwork SOCKS5 代理 取消那个10s ping”。
+彻底移除 SOCKS5 代理的 10 秒定时自动 Ping 循环，停止一切无谓的后台网络探活打扰与流量质押消耗，遵循专有通道按需调度与流量零浪费原则，同时保留用户主动测试和断网重试时的节点轮换功能。
 
-## 2. 解决方案
-1. **在设置面板 `openPanel` 中新增输入项**：
-   - `apiBaseUrl`：API 端点地址（例如 `https://api.siliconflow.cn/v1` 或 `https://api.openai.com/v1`，提示“留空则默认复用系统模型”）；
-   - `apiKey`：API Key 密钥输入框（密码隐藏输入，防止泄露）；
-   - 预设精选模型列表：注入 `gemini-2.5-flash`、`deepseek-chat`、`Qwen/Qwen2.5-7B-Instruct`、`claude-3-5-sonnet` 等，且支持自定义模型名输入。
-2. **数据持久化与打通**：
-   - 在 `settings.ai` 中保存 `apiKey` 与 `apiBaseUrl`，并通过 `localStorage` 或桌宠设置存储安全持久化；
-   - 在 `useHagemiDirector.ts` 中向桌宠发送 `pet.receive({ t: 'models', models: [...] })`，将系统当前支持的模型列表传入桌宠。
-3. **构建与自检验证**：
-   - 运行 `npx tsc --noEmit` 校验；
-   - 运行 `npm run build` 全量打包；
-   - 答复用户并清晰说明原作者机制与当前新增的输入方式。
+## 2. 变更清单
+1. **后端引擎：`server/modules/providers/list/antigravity/antigravity-proxy.ts`**
+   - 彻底关闭并移除 `proxyHealthWatchdogTimer = setInterval(..., 10_000)` 定时循环；
+   - 移除启动 1 秒后的延迟自启动探活；
+   - 重构 `startProxyHealthWatchdog()` 与 `stopProxyHealthWatchdog()`，确保不再启动后台任何轮询 Ping 定时器，并清理可能残留的定时器句柄；
+   - `getProxyHealthStatus()` 返回的状态中 `watchdogActive` 设为 `false`，默认状态文案表明“按需连接（已取消后台Ping省流）”；
+   - 保留用户主动触发的 `rotateNodeAndVerify()` 和手动连通性测试 `testProxyConnectivity()`。
+2. **前端展示：`src/modules/settings/tabs/agents-settings/sections/content/AntigravityProxySection.tsx`**
+   - 将原标签文案 `🛡️ 探活看门狗 (每10秒Ping):` 更新为 `🛡️ 链路健康与节点状态:`；
+   - 移除界面中任何提及“每10秒Ping”的过期说明，同步更新节点运行时的状态提示（例如“按需就绪/省流静默”）；
+   - 保留“换IP并验证”按钮，用户需要时仍可手动单次验证新住宅节点。
+3. **服务生命周期清理：`server/index.ts`**
+   - 检查启动与关机钩子，确保不会再启动 10s ping 定时器。
+
+## 3. 验证方案
+1. 静态类型校验：执行 `npx tsc --noEmit`，确保前后端 TypeScript 编译 0 报错；
+2. 前端静态包构建：执行 `npm run build:client`，验证生产构建无破损；
+3. 进程与定时器审查：验证系统中不再有任何针对 19999 端口的 10 秒定时 curl / ping 请求；
+4. Git 提交与同步。

@@ -926,29 +926,29 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
                 </div>
               </div>
 
-              {/* 链路健康看门狗 (10秒探活与断网秒级换IP) */}
+              {/* 链路健康与节点状态 (已取消10s后台轮询Ping，保持省流与按需静默) */}
               <div className="pt-2 border-t border-border/40 flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-semibold text-foreground">🛡️ 探活看门狗 (每10秒Ping):</span>
-                  {proxyStatus?.health?.healthy ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      链路通畅 ({proxyStatus.health.latencyMs}ms)
-                      {proxyStatus.health.rotateCount > 0 && ` · 已自动换IP ${proxyStatus.health.rotateCount} 次`}
-                    </span>
-                  ) : proxyStatus?.health?.isRotating || isRotating ? (
+                  <span className="text-[11px] font-semibold text-foreground">🛡️ 链路健康与节点状态:</span>
+                  {proxyStatus?.health?.isRotating || isRotating ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
                       <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-spin" />
-                      断网自动换节点中并立马Ping...
+                      更换节点并验证中...
                     </span>
                   ) : proxyStatus?.idleState === 'sleeping' ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-muted text-muted-foreground border border-border/40">
-                      休眠挂起（0消耗）
+                      休眠挂起（0流量消耗）
+                    </span>
+                  ) : proxyStatus?.health?.healthy ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                      {proxyStatus.health.latencyMs > 0 ? `链路通畅 (${proxyStatus.health.latencyMs}ms)` : '节点就绪（已取消后台Ping省流）'}
+                      {proxyStatus.health.rotateCount > 0 && ` · 已换IP ${proxyStatus.health.rotateCount} 次`}
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
                       <span className="h-1.5 w-1.5 rounded-full bg-rose-500 animate-pulse" />
-                      {proxyStatus?.health?.message || '待探活'}
+                      {proxyStatus?.health?.message || '按需就绪'}
                     </span>
                   )}
                 </div>
