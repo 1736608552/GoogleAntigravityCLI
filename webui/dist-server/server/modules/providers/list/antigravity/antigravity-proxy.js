@@ -529,7 +529,7 @@ export const proxyHealthState = {
     lastCheckTime: 0,
     healthy: false,
     latencyMs: 0,
-    message: '尚未开始探活',
+    message: '按需连接 (已取消后台10s自动Ping省流)',
     rotateCount: 0,
     lastRotatedTime: 0,
     watchdogActive: false,
@@ -539,8 +539,8 @@ export function getProxyHealthStatus() {
     const listening = isSocksListening(19999);
     return {
         ...proxyHealthState,
-        watchdogActive: Boolean(proxyHealthWatchdogTimer),
-        healthy: listening && proxyHealthState.healthy,
+        watchdogActive: false, // 遵循专有通道隔离与节流守则，已取消 10s 后台轮询 Ping
+        healthy: listening && (proxyHealthState.healthy || proxyHealthState.lastCheckTime === 0),
     };
 }
 /**
@@ -632,57 +632,16 @@ export async function rotateNodeAndVerify(maxAttempts = 5) {
     }
 }
 /**
- * 周期性探活任务：检查当前运行中的代理 IP 是否畅通，不通则立即换 IP
- */
-async function runHealthCheckTick() {
-    const toggle = getProxyToggle();
-    // 若当前处于直连模式或未在监听，不进行探活
-    if (toggle !== 'yes' || !isSocksListening(19999)) {
-        return;
-    }
-    // 防并发穿透：若正在探活或正在换节点，跳过本次周期
-    if (isHealthCheckingOrRotating || proxyHealthState.isRotating) {
-        return;
-    }
-    isHealthCheckingOrRotating = true;
-    try {
-        const pingRes = await testProxyConnectivity('yes');
-        proxyHealthState.lastCheckTime = Date.now();
-        proxyHealthState.latencyMs = pingRes.latencyMs;
-        proxyHealthState.message = pingRes.message;
-        if (pingRes.success) {
-            proxyHealthState.healthy = true;
-            console.log(`[URnetwork Watchdog] 🟢 10秒周期探活通过: 节点通畅 (HTTP ${pingRes.httpCode || 204}, ${pingRes.latencyMs}ms)`);
-        }
-        else {
-            console.warn(`[URnetwork Watchdog] ⚠️ 10秒周期探活失败 (${pingRes.message}, ${pingRes.latencyMs}ms)，IP 不通，马上换 IP！`);
-            await rotateNodeAndVerify(5);
-        }
-    }
-    catch (err) {
-        console.warn(`[URnetwork Watchdog] 探活异常:`, err?.message || err);
-        await rotateNodeAndVerify(5);
-    }
-    finally {
-        isHealthCheckingOrRotating = false;
-    }
-}
-/**
- * 启动代理探活看门狗（运行时严格每 10 秒 ping 一次）
+ * 启动代理探活看门狗（已根据用户要求彻底取消 10s 后台轮询 Ping，杜绝无谓的节点握手和流量消耗）
+ * 保持函数兼容，仅做状态重置，绝不拉起后台定时 Ping 循环
  */
 export function startProxyHealthWatchdog() {
-    if (proxyHealthWatchdogTimer)
-        return;
-    proxyHealthState.watchdogActive = true;
-    console.log(`[URnetwork Watchdog] 🛡️ 启动 URnetwork 代理【每10秒探活】与【断网秒级换IP】看门狗`);
-    // 启动 1 秒后立即执行首次探活
-    setTimeout(() => {
-        void runHealthCheckTick();
-    }, 1000);
-    proxyHealthWatchdogTimer = setInterval(() => {
-        void runHealthCheckTick();
-    }, 10_000); // 严格每 10 秒执行一次
-    proxyHealthWatchdogTimer.unref?.();
+    if (proxyHealthWatchdogTimer) {
+        clearInterval(proxyHealthWatchdogTimer);
+        proxyHealthWatchdogTimer = null;
+    }
+    proxyHealthState.watchdogActive = false;
+    // 已按需静默，彻底取消后台 10s 定时 Ping
 }
 /**
  * 停止代理探活看门狗（休眠或直连时停止，零消耗）
@@ -691,9 +650,8 @@ export function stopProxyHealthWatchdog() {
     if (proxyHealthWatchdogTimer) {
         clearInterval(proxyHealthWatchdogTimer);
         proxyHealthWatchdogTimer = null;
-        proxyHealthState.watchdogActive = false;
-        console.log(`[URnetwork Watchdog] ⏹️ 代理已休眠或切换直连，已暂停 10 秒探活看门狗`);
     }
+    proxyHealthState.watchdogActive = false;
 }
 /**
  * 确保 SOCKS5 代理处于唤醒并监听状态（按需唤醒 Scale-up）

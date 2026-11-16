@@ -558,7 +558,7 @@ async function startServer() {
             startEnabledPluginServers().catch(err => {
                 console.error('[Plugins] Error during startup:', err.message);
             });
-            // 初始化 URnetwork 代理健康看门狗（若代理处于运行态，自动启动每10秒探活与断网秒级换IP）
+            // 初始化 URnetwork 代理健康看门狗状态（已取消10s后台轮询Ping，保持静默省流）
             try {
                 const { isSocksListening, getProxyToggle, startProxyHealthWatchdog } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
                 if (getProxyToggle() === 'yes' && isSocksListening(19999)) {
