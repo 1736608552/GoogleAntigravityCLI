@@ -942,16 +942,12 @@ function runAntigravityTurnOnce(params) {
                 }
                 catch (_) { }
             }
-            // Check for P2P socks5 node drop / EOF: rotate urnetwork-socks if in proxy mode
+            // 检测网络流异常，仅记录诊断日志，严禁在流传输中途暴力 kill 代理进程（避免导致全部会话雪崩断流）
             if (text.includes('EOF') || text.includes('unexpected EOF') || text.includes('stream ended') || text.includes('connection reset')) {
                 const now = Date.now();
-                if (getProxyToggle() === 'yes' && now - lastProxyRestartTime > 8000) {
+                if (now - lastProxyRestartTime > 8000) {
                     lastProxyRestartTime = now;
-                    console.warn('[Antigravity Runtime] Detected proxy EOF in stderr, triggering urnetwork-socks node rotation...');
-                    try {
-                        exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
-                    }
-                    catch (_) { }
+                    console.warn('[Antigravity Runtime] 上游流式传输捕获到网络波动或 EOF 断开信号');
                 }
             }
         });
@@ -1237,49 +1233,18 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
                     continue;
                 }
                 const isStreamInterrupted = !isWatchdogTimeout && /stream was interrupted|please continue the task|subscriber fell behind updates|stalled for|interrupted before the response finished/i.test(errMsg);
-                const isProxyEOF = !isWatchdogTimeout && /EOF|connection reset by peer|stream ended|unexpected EOF|stream was interrupted|please continue the task|subscriber fell behind updates|stalled for|interrupted before the response finished/i.test(errMsg);
-                if (isProxyEOF && attempt < TOTAL_MAX_ATTEMPTS) {
-                    const isProxy = getProxyToggle() === 'yes';
-                    if (isStreamInterrupted) {
-                        console.warn(`[Antigravity Runtime] Stream interrupted / stalled (attempt ${attempt}/${TOTAL_MAX_ATTEMPTS}). Auto-resuming seamlessly with '继续'...`);
-                        if (capturedSessionId) {
-                            currentPrompt = '继续';
-                        }
-                    }
-                    if (isProxy) {
-                        if (attempt >= 2) {
-                            console.warn(`[Antigravity Runtime] EOF/Interrupted retry #${attempt}: restarting urnetwork-socks to rotate nodes...`);
-                            try {
-                                exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
-                            }
-                            catch (_) { }
-                            await new Promise((r) => setTimeout(r, 4000));
-                        }
-                        else {
-                            console.warn(`[Antigravity Runtime] EOF/Interrupted retry #${attempt}: waiting 2s for recovery...`);
-                            await new Promise((r) => setTimeout(r, 2000));
-                        }
-                    }
-                    else {
-                        console.warn(`[Antigravity Runtime] Direct mode stream retry #${attempt}: waiting 2s...`);
-                        await new Promise((r) => setTimeout(r, 2000));
-                    }
+                const isProxyEOF = !isWatchdogTimeout && /EOF|connection reset by peer|stream ended|unexpected EOF/i.test(errMsg);
+                // 防无限重发与死循环保护：流中断或断连时最多允许重试 1 次（绝不篡改 prompt 狂发“继续”，绝不中途 pkill 代理）
+                if ((isStreamInterrupted || isProxyEOF) && attempt < 2) {
+                    console.warn(`[Antigravity Runtime] 捕获到单次流中断或断连波动 (尝试 ${attempt}/2)，等待 2 秒进行单次原位恢复...`);
+                    await new Promise((r) => setTimeout(r, 2000));
                     continue;
                 }
-                // 4. Transient network / TLS / DNS / Handshake / Eligibility check errors
+                // 4. Transient network / TLS / DNS / Handshake / Eligibility check errors (最多允许 2 次瞬态重试，严禁 pkill 代理)
                 const isTransient = /retryable error|network issue|stream ended|unexpected EOF|context canceled|connection reset|Eligibility check failed|profile picture|i\/o timeout|timeout|dial tcp|connection refused|network is unreachable/i.test(errMsg);
-                if (isTransient && attempt < TOTAL_MAX_ATTEMPTS) {
-                    console.warn(`[Antigravity Runtime] Transient network error (attempt ${attempt}/${TOTAL_MAX_ATTEMPTS}): ${errMsg.slice(0, 100)}, retrying...`);
-                    if (getProxyToggle() === 'yes' && attempt >= 2) {
-                        try {
-                            exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
-                        }
-                        catch (_) { }
-                        await new Promise((r) => setTimeout(r, 4000));
-                    }
-                    else {
-                        await new Promise((r) => setTimeout(r, 2000));
-                    }
+                if (isTransient && attempt < 3) {
+                    console.warn(`[Antigravity Runtime] 瞬态网络握手轻微波动 (尝试 ${attempt}/3): ${errMsg.slice(0, 100)}，等待 2 秒重试...`);
+                    await new Promise((r) => setTimeout(r, 2000));
                     continue;
                 }
                 // Non-retryable error
@@ -1443,70 +1408,12 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
         // auth/token timeout, proxy EOF) stay fatal red errors below.
         const isRecoverableStreamPause = /stream was interrupted.*please continue|please continue the task|stream was interrupted|subscriber fell behind updates|stalled for|interrupted before the response finished/i.test(rawErrMsg);
         if (isRecoverableStreamPause) {
-            if (!abortController.signal.aborted && capturedSessionId) {
-                console.warn('[Antigravity Runtime] 捕获到流中断抖动，系统立即自动无缝发起自愈接力推进...');
-                ws.send(createNormalizedMessage({
-                    kind: 'text',
-                    role: 'assistant',
-                    content: '\n\n> ⏳ **【链路自愈续接】** 检测到上游连接偶发抖动，系统正在全自动接力续跑推进未完任务，无需手动输入...',
-                    sessionId: finalSessionId,
-                    provider: 'antigravity',
-                }));
-                try {
-                    await new Promise((r) => setTimeout(r, 2500));
-                    const recoveryResult = await runAntigravityTurnOnce({
-                        command: '上游链路已平稳恢复，请继续完成上一轮操作。',
-                        workingDir,
-                        model,
-                        effort,
-                        permissionMode,
-                        skipPermissions,
-                        images,
-                        files,
-                        capturedSessionId,
-                        accumulatedText,
-                        ws,
-                        currentSessionKey: capturedSessionId || sessionId || processKey,
-                        abortSignal: abortController.signal,
-                        onSessionDiscovered: (id) => registerSession(id),
-                        onTextDelta: (delta) => { accumulatedText += delta; },
-                        onFullText: (full) => { accumulatedText = full; },
-                        onProcessSpawned: (proc) => {
-                            currentTurnProc = proc;
-                            const keys = [capturedSessionId, sessionId, processKey].filter(Boolean);
-                            registerManagedProcess(keys, proc);
-                        },
-                    });
-                    if (recoveryResult) {
-                        const durationSec = Math.round((Date.now() - turnStartTime) / 100) / 10;
-                        const cleanAcc = (accumulatedText || '').replace(/[\u200b\s]/g, '').trim();
-                        const tokens = Math.min(Math.max(Math.round(cleanAcc.length / 3.2), 200), 25000);
-                        const fastQuota = antigravityAccountsService.getLiveQuotaCached();
-                        void antigravityAccountsService.fetchLiveQuotaSummary(true);
-                        const completeMessage = createCompleteMessage({
-                            provider: 'antigravity',
-                            sessionId: finalSessionId,
-                            exitCode: 0,
-                        });
-                        if (fastQuota)
-                            completeMessage.quotaSnapshot = fastQuota;
-                        completeMessage.initialSessionId = sessionId || processKey;
-                        completeMessage.actualSessionId = finalSessionId;
-                        ws.send(completeMessage);
-                        notifyTerminalState({ code: 0 });
-                        cleanupProcessTracking();
-                        return { conversationId: capturedSessionId, exitCode: 0 };
-                    }
-                }
-                catch (recErr) {
-                    console.warn('[Antigravity Runtime] 自动续接回合遇到异常，进入安全兜底:', recErr?.message);
-                }
-            }
+            console.warn('[Antigravity Runtime] 捕获到流中断，优雅停止自动重发，将控制权交给用户');
             if (!abortController.signal.aborted) {
                 ws.send(createNormalizedMessage({
                     kind: 'text',
                     role: 'assistant',
-                    content: '上游连接发生抖动，已自动尝试多次续接。回复“继续”即可接着处理。',
+                    content: '\n\n> ⚠️ 上游数据流传输短暂中断。系统已停止自动重试，您可以回复“继续”随时恢复处理。',
                     sessionId: finalSessionId,
                     provider: 'antigravity',
                 }));
