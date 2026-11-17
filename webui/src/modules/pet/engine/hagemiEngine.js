@@ -1561,10 +1561,18 @@ HAGEMI.boot = async function boot(send, options = {}) {
     bubble.style.setProperty('--tail-x', `${clamp(headX - left, 18, width - 18)}px`);
   }
   function startSpeech(item) {
+    if (!item || !item.text) return;
+    if (settings.hidden || (settings.hiddenUntil && Date.now() < settings.hiddenUntil)) {
+      speech = null;
+      speechQueue = [];
+      closeBubble();
+      return;
+    }
     const cjk = /[㐀-鿿぀-ヿ]/.test(item.text);
     speech = { ...item, chars: Array.from(item.text), shown: 0, clock: 0, step: cjk ? 0.042 : 0.019, finished: 0, hold: item.ms || clamp(1900 + item.text.length * (cjk ? 110 : 48), 2900, 9500) };
     bubbleText.textContent = '';
     bubbleMark.textContent = item.ai ? '✦' : '';
+    bubble.style.display = '';
     bubble.classList.add('show');
     placeBubble();
     const mood = HAGEMI.MOODS[item.mood];
@@ -1572,6 +1580,11 @@ HAGEMI.boot = async function boot(send, options = {}) {
     animator.setTalking(true);
   }
   function stepSpeech(dt, now) {
+    if (settings.hidden || (settings.hiddenUntil && Date.now() < settings.hiddenUntil)) {
+      if (speech || bubble.classList.contains('show')) closeBubble();
+      speechQueue = [];
+      return;
+    }
     if (!speech) {
       // Keep quiet while someone is typing, then speak.
       if (speechQueue.length && (now - lastKeyAt > 1400 || now - speechQueue[0].queuedAt > 12000)) startSpeech(speechQueue.shift());
@@ -1594,6 +1607,8 @@ HAGEMI.boot = async function boot(send, options = {}) {
     speech = null;
     animator.setTalking(false);
     bubble.classList.remove('show');
+    bubbleText.textContent = '';
+    bubbleMark.textContent = '';
   }
   listen(bubble, 'click', closeBubble);
 
@@ -2163,9 +2178,18 @@ ${ai.personaExtra ? `主人补充设定：${ai.personaExtra}` : ''}`;
     send({ type: 'settings', patch: change });
   }
   function applyVisibility() {
-    const hidden = settings.hidden || (settings.hiddenUntil && Date.now() < settings.hiddenUntil);
-    stage.style.display = hidden ? 'none' : 'block';
-    if (hidden) { closeBubble(); hideHud(); }
+    const hidden = Boolean(settings.hidden || (settings.hiddenUntil && Date.now() < settings.hiddenUntil));
+    if (host) host.style.display = hidden ? 'none' : '';
+    if (stage) stage.style.display = hidden ? 'none' : 'block';
+    if (bubble) bubble.style.display = hidden ? 'none' : '';
+    if (hud) hud.style.display = hidden ? 'none' : '';
+    if (menu) menu.style.display = hidden ? 'none' : '';
+    if (hidden) {
+      speechQueue = [];
+      closeBubble();
+      hideHud();
+      closeMenu();
+    }
   }
 
   // ---- Touch: pokes, pats, shakes, a short temper -----------------------------------------
@@ -2568,6 +2592,7 @@ ${ai.personaExtra ? `主人补充设定：${ai.personaExtra}` : ''}`;
         if (message.burst) for (const name of [].concat(message.burst)) fx.burst(name, STAGE.cx, 400);
         break;
       case 'say':
+        if (settings.hidden || (settings.hiddenUntil && Date.now() < settings.hiddenUntil)) break;
         if (settings.muted && !message.force) break;
         speechQueue.push({ text: message.text, mood: message.mood, ai: message.ai, ms: message.ms, queuedAt: performance.now() });
         if (speechQueue.length > 2) speechQueue.shift();

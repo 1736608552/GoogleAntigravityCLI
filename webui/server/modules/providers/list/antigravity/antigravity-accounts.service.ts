@@ -114,16 +114,47 @@ const activeLogins = new Map<string, CliLoginSession>();
 
 const URL_REGEX = /https:\/\/accounts\.google\.com[^\s\x1b\x07\x00-\x1f'"]+/i;
 
-function parseJwtPayload(jwtStr?: string): { email?: string; name?: string; sub?: string } | null {
+function parseJwtPayload(jwtStr?: string): { email?: string; name?: string; sub?: string; picture?: string } | null {
   if (!jwtStr || typeof jwtStr !== 'string') return null;
   try {
     const parts = jwtStr.split('.');
     if (parts.length < 2) return null;
-    const jsonStr = Buffer.from(parts[1], 'base64').toString('utf8');
+    let jsonStr = '';
+    try {
+      jsonStr = Buffer.from(parts[1], 'base64url').toString('utf8');
+    } catch {
+      jsonStr = Buffer.from(parts[1], 'base64').toString('utf8');
+    }
     return JSON.parse(jsonStr);
   } catch {
     return null;
   }
+}
+
+async function fetchGoogleUserInfo(accessToken?: string): Promise<{ email?: string; name?: string; picture?: string } | null> {
+  if (!accessToken || typeof accessToken !== 'string') return null;
+  const urls = [
+    'https://www.googleapis.com/oauth2/v3/userinfo',
+    'https://oauth2.googleapis.com/tokeninfo?access_token=' + encodeURIComponent(accessToken),
+  ];
+  for (const url of urls) {
+    try {
+      const headers: Record<string, string> = url.includes('userinfo') ? { Authorization: `Bearer ${accessToken}` } : {};
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(6000) });
+      if (res.ok) {
+        const data: any = await res.json();
+        const email = data.email || '';
+        if (email) {
+          return {
+            email,
+            name: data.name || email.split('@')[0],
+            picture: data.picture || '',
+          };
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
 }
 
 function cleanAndTranslateResetDesc(text?: string | null): string {
@@ -1565,14 +1596,30 @@ class AntigravityAccountsService {
       return { ok: false, error: '未检测到有效的授权 Token' };
     }
 
-    const jwt = parseJwtPayload(resolvedToken.id_token);
-    const email = jwt?.email || resolvedToken.email || '';
+    const idToken = resolvedToken.id_token || resolvedToken.token?.id_token || '';
+    const jwt = parseJwtPayload(idToken);
+    let email = jwt?.email || resolvedToken.email || resolvedToken.token?.email || '';
+    let name = jwt?.name || resolvedToken.name || resolvedToken.token?.name || '';
+    let picture = (jwt as any)?.picture || resolvedToken.picture || resolvedToken.token?.picture || '';
+
+    // 若未解析出邮箱，使用 access_token 向 Google 官方查询 userinfo / tokeninfo 补全
+    if (!email) {
+      const accessToken = resolvedToken.access_token || resolvedToken.token?.access_token || '';
+      if (accessToken) {
+        const userInfo = await fetchGoogleUserInfo(accessToken);
+        if (userInfo?.email) {
+          email = userInfo.email;
+          if (!name && userInfo.name) name = userInfo.name;
+          if (!picture && userInfo.picture) picture = userInfo.picture;
+        }
+      }
+    }
+
     if (!email) {
       return { ok: false, error: 'Token 中未解析到有效的 Google 账号邮箱，请重新授权' };
     }
 
-    const name = jwt?.name || resolvedToken.name || email.split('@')[0];
-    const picture = resolvedToken.picture || '';
+    if (!name) name = email.split('@')[0];
 
     const accounts = this.loadAccounts();
     const isFirst = accounts.length === 0;
@@ -1768,15 +1815,27 @@ class AntigravityAccountsService {
     if (!session) return { status: 'error', error: '登录会话已失效' };
 
     if (session.settled) {
-      const tokenPath = path.join(session.fakeHome, '.gemini', 'antigravity-cli', 'antigravity-oauth-token');
+      const candidatePaths = [
+        path.join(session.fakeHome, '.gemini', 'antigravity-cli', 'antigravity-oauth-token'),
+        path.join(session.fakeHome, '.config', 'antigravity', 'antigravity-oauth-token'),
+        path.join(session.fakeHome, '.antigravity', 'antigravity-oauth-token'),
+      ];
       let tokenData: any = null;
-      try {
-        if (fs.existsSync(tokenPath)) {
-          tokenData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-        }
-      } catch (_) {}
+      for (const tp of candidatePaths) {
+        try {
+          if (fs.existsSync(tp)) {
+            tokenData = JSON.parse(fs.readFileSync(tp, 'utf8'));
+            if (tokenData) break;
+          }
+        } catch (_) {}
+      }
 
-      const hasValidToken = Boolean(tokenData?.token?.access_token || tokenData?.token?.refresh_token);
+      const hasValidToken = Boolean(
+        tokenData?.token?.access_token ||
+        tokenData?.token?.refresh_token ||
+        tokenData?.access_token ||
+        tokenData?.refresh_token
+      );
       if (hasValidToken) {
         const addResult = await this.addAccount('', tokenData);
         this.cleanupLoginSession(id);

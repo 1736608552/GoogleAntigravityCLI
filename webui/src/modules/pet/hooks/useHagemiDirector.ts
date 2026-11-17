@@ -43,7 +43,7 @@ export function useHagemiDirector({ pet, settings }: UseHagemiDirectorProps) {
 
   // 辅助函数：根据频率设置决定是否发表气泡吐槽
   const trySay = (category: Parameters<typeof getRandomLine>[0], force = false) => {
-    if (!pet || settings.chattiness === 'silent') return;
+    if (!pet || !settings.enabled || settings.chattiness === 'silent') return;
     const now = Date.now();
     const intervals: Record<HagemiSettings['chattiness'], number> = {
       silent: Infinity,
