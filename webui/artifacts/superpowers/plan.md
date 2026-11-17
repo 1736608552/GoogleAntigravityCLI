@@ -1,25 +1,22 @@
-# 取消 URnetwork SOCKS5 代理 10s Ping 规划方案 (Superpowers Plan)
+# 修复计划 (Implementation Plan)
 
-## 1. 目标
-响应用户需求：“URnetwork SOCKS5 代理 取消那个10s ping”。
-彻底移除 SOCKS5 代理的 10 秒定时自动 Ping 循环，停止一切无谓的后台网络探活打扰与流量质押消耗，遵循专有通道按需调度与流量零浪费原则，同时保留用户主动测试和断网重试时的节点轮换功能。
+## 任务目标
+1. **修复添加 Google 账号报错**：解决用户在 WebUI 网页 OAuth 授权提交验证码后，提示 `Token 中未解析到有效的 Google 账号邮箱，请重新授权` 的缺陷。
+2. **修复关闭桌宠后残留空白气泡**：解决用户在“设置-外观”关闭哈基米桌宠伴侣后，屏幕右上角常驻残留淡紫色边框空白对话框的缺陷。
 
-## 2. 变更清单
-1. **后端引擎：`server/modules/providers/list/antigravity/antigravity-proxy.ts`**
-   - 彻底关闭并移除 `proxyHealthWatchdogTimer = setInterval(..., 10_000)` 定时循环；
-   - 移除启动 1 秒后的延迟自启动探活；
-   - 重构 `startProxyHealthWatchdog()` 与 `stopProxyHealthWatchdog()`，确保不再启动后台任何轮询 Ping 定时器，并清理可能残留的定时器句柄；
-   - `getProxyHealthStatus()` 返回的状态中 `watchdogActive` 设为 `false`，默认状态文案表明“按需连接（已取消后台Ping省流）”；
-   - 保留用户主动触发的 `rotateNodeAndVerify()` 和手动连通性测试 `testProxyConnectivity()`。
-2. **前端展示：`src/modules/settings/tabs/agents-settings/sections/content/AntigravityProxySection.tsx`**
-   - 将原标签文案 `🛡️ 探活看门狗 (每10秒Ping):` 更新为 `🛡️ 链路健康与节点状态:`；
-   - 移除界面中任何提及“每10秒Ping”的过期说明，同步更新节点运行时的状态提示（例如“按需就绪/省流静默”）；
-   - 保留“换IP并验证”按钮，用户需要时仍可手动单次验证新住宅节点。
-3. **服务生命周期清理：`server/index.ts`**
-   - 检查启动与关机钩子，确保不会再启动 10s ping 定时器。
+## 方案拆解与文件修改
+1. **服务端 Google 账号邮箱解析兜底** (`server/modules/providers/list/antigravity/antigravity-accounts.service.ts`)：
+   - 健壮化 `parseJwtPayload`：支持标准 Base64URL 解码与 UTF-8 容错。
+   - 实现 `fetchGoogleUserInfo`：当从 JWT（id_token）无法获取 `email` 时，使用 `access_token` 自动向 Google 官方 `https://www.googleapis.com/oauth2/v3/userinfo` 及 `https://oauth2.googleapis.com/tokeninfo` 发送反向查询请求，兜底提取真实邮箱、显示名称及头像。
+   - 适配 token 数据结构多层级容错（兼容直接对象与嵌套 `token.id_token`）。
+2. **前端桌宠隐藏全链路阻断** (`src/modules/pet/engine/hagemiEngine.js` 与 `src/modules/pet/hooks/useHagemiDirector.ts`)：
+   - 在 `applyVisibility` 中，当 `settings.hidden` 时不仅隐藏主舞台，同时强制将 `bubble`（对话气泡）、`hud`（状态栏）、`menu`（右键菜单）全部设为 `display: none`。
+   - 在 `startSpeech`、`stepSpeech`、`case 'say'`、`trySay` 中增加状态阻断门禁，隐藏/禁用状态下严禁将消息推入播放队列，严禁执行 `bubble.classList.add('show')`。
+   - 在关闭时清空 `speechQueue` 并重置 `bubbleText`，彻底消灭孤立悬浮气泡。
 
-## 3. 验证方案
-1. 静态类型校验：执行 `npx tsc --noEmit`，确保前后端 TypeScript 编译 0 报错；
-2. 前端静态包构建：执行 `npm run build:client`，验证生产构建无破损；
-3. 进程与定时器审查：验证系统中不再有任何针对 19999 端口的 10 秒定时 curl / ping 请求；
-4. Git 提交与同步。
+## 验证与发布
+1. `npx tsc --noEmit` 静态类型检查。
+2. `npm run build:server` 服务端编译发布到 `dist-server/`。
+3. `npm run build:client` 前端生产打包发布到 `dist/`。
+4. 重启 3100 服务进程使最新后端生效。
+5. 提交 Git 并推送到远程仓库。
