@@ -91,8 +91,8 @@ const createFakeSubmitEvent = () => {
   return { preventDefault: () => undefined } as unknown as FormEvent<HTMLFormElement>;
 };
 
-const MAX_ATTACHMENT_COUNT = 10;
-const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+const MAX_ATTACHMENT_COUNT = 20;
+const MAX_ATTACHMENT_SIZE = 100 * 1024 * 1024; // 100MB，支持高分辨率图片与大附件
 
 const isImageAttachment = (attachment: ChatAttachment) => {
   if (attachment.mimeType?.startsWith('image/')) return true;
@@ -586,7 +586,7 @@ export function useChatComposerState({
           const fileName = file.name || 'Unknown file';
           setFileErrors((previous) => {
             const next = new Map(previous);
-            next.set(fileName, 'File too large (max 10MB)');
+            next.set(fileName, '附件过大 (最大支持 100MB)');
             return next;
           });
           return false;

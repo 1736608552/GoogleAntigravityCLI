@@ -265,7 +265,8 @@ function ChatInterface({
   // missed live events, and re-attaches a still-running stream to this socket.
   const handleWebSocketReconnect = useCallback(async () => {
     if (!selectedProject || !selectedSession) return;
-    await requestLatestMessages(selectedSession.id, isActive);
+    // 关键优化：优先立刻发送 chat.subscribe，让服务端第一时间将重连后的新 socket
+    // 重新挂载到正在执行中的活跃运行通道上并重放可能错过的事件，绝不被异步 HTTP 请求阻塞！
     statusCheckSentAtRef.current.set(selectedSession.id, Date.now());
     sendMessage({
       type: 'chat.subscribe',
@@ -274,6 +275,8 @@ function ChatInterface({
         lastSeq: lastSeqRef.current.get(selectedSession.id) ?? 0,
       }],
     });
+    // 然后在后台异步同步已持久化的最新消息
+    void requestLatestMessages(selectedSession.id, isActive);
   }, [isActive, requestLatestMessages, selectedProject, selectedSession, sendMessage]);
 
   useChatRealtimeHandlers({

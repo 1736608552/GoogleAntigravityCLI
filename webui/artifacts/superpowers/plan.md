@@ -1,22 +1,31 @@
-# 修复计划 (Implementation Plan)
+# 交互升级与核心缺陷修复计划 (Superpowers Plan)
 
 ## 任务目标
-1. **修复添加 Google 账号报错**：解决用户在 WebUI 网页 OAuth 授权提交验证码后，提示 `Token 中未解析到有效的 Google 账号邮箱，请重新授权` 的缺陷。
-2. **修复关闭桌宠后残留空白气泡**：解决用户在“设置-外观”关闭哈基米桌宠伴侣后，屏幕右上角常驻残留淡紫色边框空白对话框的缺陷。
+1. **彻底根治“对话后必须手动刷新才显示”的严重 Bug**：
+   - 完善 WebSocket 应用层双向心跳保活（15秒定时 ping/pong），防止手机端及反向代理超时切断连接；
+   - 优化 WebSocket 重连处理：重连后第一时间同步发送 `chat.subscribe`，确保服务端即时重绑 socket 并重放缺失事件；
+   - 前端增加活跃运行态防假死兜底同步（Active Turn Fallback Sync）：处于 processing 状态下若超过 3 秒无 WebSocket 推送，自动静默增量拉取，彻底告别手动 F5 刷新。
+2. **彻底解决“附件大文件图片不能上传”的问题**：
+   - 将服务端 `assets.routes.ts` 的图片上传限制由 5MB、附件限制由 10MB 全面放宽至 100MB，支持 20 个并发文件；
+   - 将前端 `useChatComposerState.ts` 的 `MAX_ATTACHMENT_SIZE` 放宽至 100MB，优化超限提示为中文。
+3. **实现截图所示的全新交互体系**：
+   - **任务进度清单卡片（Task Plan Checklist）**：
+     - 自动检测并提取 Markdown 任务待办列表（`[x]`, `[/]`, `[ ]`）；
+     - 渲染为半透明圆角卡片，具有已完成（✔）、进行中（⠇动态动画）、待执行（○）等精美状态；
+   - **步骤折叠与动态计时条（Running Step Accordion）**：
+     - 工具调用与执行步骤默认采用折叠状态条展示，右侧带有动态实时运行计时器（如 `12s`、`1m 25s ⌵`），可一键平滑展开/折叠日志；
+   - **快捷引用按钮（Floating Quote Action）**：
+     - 划选文本或在消息右侧提供快捷“引用”按钮，一键将内容带入输入框。
 
-## 方案拆解与文件修改
-1. **服务端 Google 账号邮箱解析兜底** (`server/modules/providers/list/antigravity/antigravity-accounts.service.ts`)：
-   - 健壮化 `parseJwtPayload`：支持标准 Base64URL 解码与 UTF-8 容错。
-   - 实现 `fetchGoogleUserInfo`：当从 JWT（id_token）无法获取 `email` 时，使用 `access_token` 自动向 Google 官方 `https://www.googleapis.com/oauth2/v3/userinfo` 及 `https://oauth2.googleapis.com/tokeninfo` 发送反向查询请求，兜底提取真实邮箱、显示名称及头像。
-   - 适配 token 数据结构多层级容错（兼容直接对象与嵌套 `token.id_token`）。
-2. **前端桌宠隐藏全链路阻断** (`src/modules/pet/engine/hagemiEngine.js` 与 `src/modules/pet/hooks/useHagemiDirector.ts`)：
-   - 在 `applyVisibility` 中，当 `settings.hidden` 时不仅隐藏主舞台，同时强制将 `bubble`（对话气泡）、`hud`（状态栏）、`menu`（右键菜单）全部设为 `display: none`。
-   - 在 `startSpeech`、`stepSpeech`、`case 'say'`、`trySay` 中增加状态阻断门禁，隐藏/禁用状态下严禁将消息推入播放队列，严禁执行 `bubble.classList.add('show')`。
-   - 在关闭时清空 `speechQueue` 并重置 `bubbleText`，彻底消灭孤立悬浮气泡。
-
-## 验证与发布
-1. `npx tsc --noEmit` 静态类型检查。
-2. `npm run build:server` 服务端编译发布到 `dist-server/`。
-3. `npm run build:client` 前端生产打包发布到 `dist/`。
-4. 重启 3100 服务进程使最新后端生效。
-5. 提交 Git 并推送到远程仓库。
+## 涉及文件
+- 服务端：
+  - `server/modules/assets/assets.routes.ts`（放宽图片与文件上传至 100MB）
+  - `server/modules/websocket/services/chat-websocket.service.ts`（支持应用层 ping/pong）
+- 前端：
+  - `src/shared/context/WebSocketContext.tsx`（添加 15s 定时 ping 心跳）
+  - `src/modules/chat/hooks/useChatComposerState.ts`（放宽前端附件大小至 100MB）
+  - `src/modules/chat/ChatInterface.tsx`（优先同步发送 chat.subscribe）
+  - `src/modules/chat/hooks/useChatSessionState.ts`（增加 processing 状态防假死兜底拉取）
+  - `src/modules/chat/transcript/TaskPlanChecklist.tsx`（全新任务进度打勾卡片组件）
+  - `src/modules/chat/transcript/RunningStepAccordion.tsx`（全新带计时器的折叠步骤条）
+  - `src/modules/chat/transcript/MessageComponent.tsx` 与 `ToolGroupContainer.tsx`（集成新交互卡片）

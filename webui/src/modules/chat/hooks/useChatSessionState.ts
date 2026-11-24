@@ -833,6 +833,20 @@ export function useChatSessionState({
     isProcessing,
   ]);
 
+  // 运行态防假死兜底轮询机制（Active Processing Fallback Sync）：
+  // 当会话处于处理（isProcessing）状态时，启动 4 秒静默兜底轮询；
+  // 彻底防止移动端熄屏、切后台或弱网导致 WebSocket 漏帧时界面假死停滞，
+  // 确保新生成的对话内容无需用户手动刷新即可自动呈现。
+  useEffect(() => {
+    if (!isProcessing || !activeSessionId || !isActive) return;
+
+    const fallbackTimer = setInterval(() => {
+      void requestLatestMessages(activeSessionId, true);
+    }, 4000);
+
+    return () => clearInterval(fallbackTimer);
+  }, [isProcessing, activeSessionId, isActive, requestLatestMessages]);
+
   // Search navigation target
   useEffect(() => {
     const session = selectedSession as Record<string, unknown> | null;

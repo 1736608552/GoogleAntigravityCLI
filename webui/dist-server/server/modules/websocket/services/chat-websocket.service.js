@@ -433,6 +433,12 @@ export function handleChatConnection(ws, request, dependencies) {
             const data = parsed;
             const messageType = typeof data.type === 'string' ? data.type : '';
             switch (messageType) {
+                case 'ping':
+                case 'chat.ping':
+                    if (ws.readyState === WS_OPEN_STATE) {
+                        ws.send(JSON.stringify({ kind: 'pong', timestamp: Date.now() }));
+                    }
+                    return;
                 case 'chat.edit-send':
                     await handleChatEditSend(ws, userId, data, dependencies);
                     return;

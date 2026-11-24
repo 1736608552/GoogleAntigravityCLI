@@ -27,15 +27,15 @@ const upload = multer({
         }
     },
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB
-        files: 5,
+        fileSize: 100 * 1024 * 1024, // 100MB，支持高清大图、手机高分辨率原图与长截图
+        files: 20,
     },
 });
 const attachmentUpload = multer({
     storage,
     limits: {
-        fileSize: 10 * 1024 * 1024,
-        files: 10,
+        fileSize: 100 * 1024 * 1024, // 100MB，支持各种大型开发文档、数据包与压缩文件
+        files: 20,
     },
 });
 /**
@@ -43,7 +43,7 @@ const attachmentUpload = multer({
  * returns their absolute paths for use in provider prompts and chat history.
  */
 router.post('/images', (req, res) => {
-    upload.array('images', 5)(req, res, (err) => {
+    upload.array('images', 20)(req, res, (err) => {
         if (err) {
             const message = err instanceof Error ? err.message : 'Upload failed';
             return res.status(400).json({ error: message });
@@ -61,7 +61,7 @@ router.post('/images', (req, res) => {
  * tools; uploads are capped at 10 files and 10MB per file.
  */
 router.post('/files', (req, res) => {
-    attachmentUpload.array('files', 10)(req, res, (err) => {
+    attachmentUpload.array('files', 20)(req, res, (err) => {
         if (err) {
             const message = err instanceof Error ? err.message : 'Upload failed';
             return res.status(400).json({ error: message });
