@@ -57,6 +57,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const [isConnected, setIsConnected] = useState(false);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastActivityAtRef = useRef<number>(Date.now());
   const { isLoading: isAuthLoading, token, user } = useAuth();
 
   const dispatch = useCallback((event: ServerEvent) => {
@@ -86,6 +87,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       wsRef.current = websocket;
 
       websocket.onopen = () => {
+        lastActivityAtRef.current = Date.now();
         setIsConnected(true);
         if (hasConnectedRef.current) {
           // This is a reconnect — signal so components can catch up on missed messages
@@ -93,12 +95,19 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         }
         hasConnectedRef.current = true;
 
-        // 启动应用层 15s 定时心跳保活，防止移动端切后台或反代超时掐断连接
+        // 启动应用层 15s 定时心跳保活，并检测超过 35s 无任何消息/pong 的半开假死连接
         if (heartbeatIntervalRef.current) {
           clearInterval(heartbeatIntervalRef.current);
         }
         heartbeatIntervalRef.current = setInterval(() => {
           if (websocket.readyState === WebSocket.OPEN) {
+            if (Date.now() - lastActivityAtRef.current > 35_000) {
+              console.warn('[WebSocket] 心跳超时，判定连接假死并主动重连');
+              try {
+                websocket.close();
+              } catch (_) {}
+              return;
+            }
             try {
               websocket.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
             } catch (_) {}
@@ -107,6 +116,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       };
 
       websocket.onmessage = (event) => {
+        lastActivityAtRef.current = Date.now();
         try {
           const data = JSON.parse(event.data) as ServerEvent;
           // 心跳回应静默处理，避免产生无谓的前端重渲染
@@ -130,11 +140,11 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         setIsConnected(false);
         wsRef.current = null;
 
-        // Attempt to reconnect after 3 seconds
+        // Attempt to reconnect quickly (1.2s)
         reconnectTimeoutRef.current = setTimeout(() => {
           if (unmountedRef.current) return; // Prevent reconnection if unmounted
           connect();
-        }, 3000);
+        }, 1200);
       };
 
       websocket.onerror = (error) => {
@@ -160,8 +170,58 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     }
     connect();
 
+    const handleResumeOrOnline = () => {
+      if (unmountedRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+
+      const activeSocket = wsRef.current;
+      if (!activeSocket || activeSocket.readyState === WebSocket.CLOSED || activeSocket.readyState === WebSocket.CLOSING) {
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
+        connect();
+        return;
+      }
+
+      if (activeSocket.readyState === WebSocket.OPEN) {
+        // 移动端息屏/切回前台时，WebView 的 readyState 可能仍误报为 OPEN，
+        // 发送 ping 后若 2.5 秒内无任何回包，立即判定假死并强制断开重连
+        const wakePingAt = Date.now();
+        try {
+          activeSocket.send(JSON.stringify({ type: 'ping', timestamp: wakePingAt }));
+        } catch (_) {}
+        dispatch({ kind: 'websocket_reconnected', timestamp: wakePingAt });
+
+        setTimeout(() => {
+          if (unmountedRef.current) return;
+          if (wsRef.current === activeSocket && lastActivityAtRef.current < wakePingAt) {
+            console.warn('[WebSocket] 息屏唤醒后 2.5s 无响应，判定半开假死并强制重连');
+            try {
+              activeSocket.close();
+            } catch (_) {}
+          }
+        }, 2500);
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleResumeOrOnline);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleResumeOrOnline);
+      window.addEventListener('online', handleResumeOrOnline);
+    }
+
     return () => {
       unmountedRef.current = true;
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleResumeOrOnline);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleResumeOrOnline);
+        window.removeEventListener('online', handleResumeOrOnline);
+      }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

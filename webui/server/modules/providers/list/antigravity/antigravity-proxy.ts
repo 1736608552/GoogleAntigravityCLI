@@ -194,27 +194,33 @@ export function getProxyStatus(): UrnProxyStatus {
   let activeProviderCount: number | null = null;
   let activeCountry = urn.country || 'United States';
 
-  try {
-    const logPaths = [
-      '/vol1/@apphome/GoogleAntigravityCLI/urnetwork/socks.log',
-      '/tmp/urn-socks.log',
-    ];
-    for (const lp of logPaths) {
-      if (fs.existsSync(lp)) {
-        const out = execFileSync('grep', ['-a', 'country matched', lp], { encoding: 'utf8' });
-        const lines = out.trim().split('\n').filter(Boolean);
-        if (lines.length > 0) {
-          const last = lines[lines.length - 1];
-          const m = last.match(/country matched "([^"]+)", provider count (\d+)/);
-          if (m) {
-            activeCountry = m[1];
-            activeProviderCount = parseInt(m[2], 10);
-            break;
+  // 只有在代理正在监听运行时，才从日志中读取实际握手的节点信息
+  if (socksListening) {
+    try {
+      const logPaths = [
+        '/vol1/@apphome/GoogleAntigravityCLI/urnetwork/socks.log',
+        '/tmp/urn-socks.log',
+      ];
+      for (const lp of logPaths) {
+        if (fs.existsSync(lp)) {
+          const out = execFileSync('grep', ['-a', 'country matched', lp], { encoding: 'utf8' });
+          const lines = out.trim().split('\n').filter(Boolean);
+          if (lines.length > 0) {
+            const last = lines[lines.length - 1];
+            const m = last.match(/country matched "([^"]+)", provider count (\d+)/);
+            if (m) {
+              activeCountry = m[1];
+              activeProviderCount = parseInt(m[2], 10);
+              break;
+            }
           }
         }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  } else {
+    // 代理处于智能休眠（0流量消耗）时，出口直接反映当前配置的目标国家，避免被旧历史日志误导
+    activeCountry = urn.country || 'United States';
+  }
 
   const isListening = socksListening;
   let currentIdleState: 'active' | 'idle' | 'sleeping' = idleState;

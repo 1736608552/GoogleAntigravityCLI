@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon, LanguagesIcon } from 'lucide-react';
+import { PaperclipIcon, Loader2, ArrowUpIcon, PencilIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -33,10 +33,11 @@ import PermissionRequestsBanner from '@/modules/chat/composer/PermissionRequests
 import TokenUsageSummary from '@/modules/chat/composer/TokenUsageSummary';
 import QueuedMessageCard from '@/modules/chat/composer/QueuedMessageCard';
 import BackgroundSendDialog from '@/modules/chat/composer/BackgroundSendDialog';
-import ReasoningTranslateDialog from './ReasoningTranslateDialog';
+import ReasoningTranslateDialog from '@/modules/chat/composer/ReasoningTranslateDialog';
 import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessagePopover';
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
 import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
+import ComposerMoreMenu from '@/modules/chat/composer/ComposerMoreMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
 
 type MentionableFile = {
@@ -85,6 +86,7 @@ type ChatComposerProps = {
   onCancelScheduledMessage: (id: string) => void;
   onEditQueuedDraft: () => void;
   onDeleteQueuedDraft: () => void;
+  onSendQueuedDraftNow?: () => void;
   attachedFiles: File[];
   onRemoveAttachment: (index: number) => void;
   fileErrors: Map<string, string>;
@@ -160,6 +162,7 @@ export default function ChatComposer({
   onCancelScheduledMessage,
   onEditQueuedDraft,
   onDeleteQueuedDraft,
+  onSendQueuedDraftNow,
   attachedFiles,
   onRemoveAttachment,
   fileErrors,
@@ -256,7 +259,6 @@ export default function ChatComposer({
 
   // Hide the thinking/status bar while any permission request is pending
   const hasPendingPermissions = pendingPermissionRequests.length > 0;
-  const hasActivityIndicator = Boolean(activity && !hasPendingPermissions);
 
   const hasQueuedDraft = Boolean(queuedDraft);
   const canQueueDraft = isLoading && Boolean(input?.trim() || attachedFiles.length > 0);
@@ -276,44 +278,65 @@ export default function ChatComposer({
       : t('input.send');
 
   return (
-    <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-2 pt-0 sm:px-4 sm:pb-4 md:px-4 md:pb-6">
+    <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-[max(0.625rem,calc(env(safe-area-inset-bottom,0px)+0.25rem))] pt-0 sm:px-4 sm:pb-4 md:px-4 md:pb-6">
       {!hasPendingPermissions && (
-        <div className="pointer-events-none absolute bottom-full left-1/2 z-10 w-[calc(100%-1rem)] max-w-[54.25rem] -translate-x-1/2 translate-y-px bg-transparent sm:w-[calc(100%-2rem)]">
+        <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 w-[calc(100%-1rem)] max-w-[54.25rem] -translate-x-1/2 bg-transparent sm:w-[calc(100%-2rem)]">
           <ActivityIndicator activity={activity} onAbort={onAbortSession} isInputFocused={isInputFocused} />
         </div>
       )}
 
-      {pendingPermissionRequests.length > 0 && (
-        <div className="mx-auto mb-3 max-w-[54.25rem]">
-          <PermissionRequestsBanner
-            pendingPermissionRequests={pendingPermissionRequests}
-            handlePermissionDecision={handlePermissionDecision}
-            handleGrantToolPermission={handleGrantToolPermission}
+      {(pendingPermissionRequests.length > 0 || scheduledMessages.length > 0 || isEditingSentMessage || queuedDraft) && (
+      <div className="mx-auto mb-2 flex w-full max-w-[54.25rem] flex-col gap-2">
+
+        {pendingPermissionRequests.length > 0 && (
+          <div className="pointer-events-auto">
+            <PermissionRequestsBanner
+              pendingPermissionRequests={pendingPermissionRequests}
+              handlePermissionDecision={handlePermissionDecision}
+              handleGrantToolPermission={handleGrantToolPermission}
+            />
+          </div>
+        )}
+
+        <div className="pointer-events-auto">
+          <ScheduledMessageList
+            scheduledMessages={scheduledMessages}
+            onCancel={onCancelScheduledMessage}
           />
         </div>
-      )}
 
-      <ScheduledMessageList
-        scheduledMessages={scheduledMessages}
-        onCancel={onCancelScheduledMessage}
-      />
+        {isEditingSentMessage && (
+          <div className="pointer-events-auto flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground backdrop-blur-md">
+            <PencilIcon className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span className="min-w-0 flex-1">
+              {t('composer.editing.title')}
+              {' — '}
+              <span className="text-muted-foreground">{t('composer.editing.filesNotReverted')}</span>
+            </span>
+            <button
+              type="button"
+              onClick={onCancelEditMessage}
+              className="shrink-0 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {t('composer.editing.cancel')}
+            </button>
+          </div>
+        )}
 
-      {isEditingSentMessage && (
-        <div className="mx-auto mb-2 flex max-w-[54.25rem] items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
-          <PencilIcon className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-          <span className="min-w-0 flex-1">
-            {t('composer.editing.title')}
-            {' — '}
-            <span className="text-muted-foreground">{t('composer.editing.filesNotReverted')}</span>
-          </span>
-          <button
-            type="button"
-            onClick={onCancelEditMessage}
-            className="shrink-0 rounded-md px-2 py-1 font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {t('composer.editing.cancel')}
-          </button>
-        </div>
+        {queuedDraft && (
+          <div className="pointer-events-auto">
+            <QueuedMessageCard
+              content={queuedDraft.content}
+              attachmentCount={
+                queuedDraft.uploadedAttachments?.length ?? queuedDraft.attachments.length
+              }
+              onSendNow={onSendQueuedDraftNow}
+              onEdit={onEditQueuedDraft}
+              onDelete={onDeleteQueuedDraft}
+            />
+          </div>
+        )}
+      </div>
       )}
 
       <BackgroundSendDialog
@@ -326,18 +349,7 @@ export default function ChatComposer({
         onOpenChange={setIsTranslateDialogOpen}
       />
 
-      {queuedDraft && (
-        <QueuedMessageCard
-          content={queuedDraft.content}
-          attachmentCount={
-            queuedDraft.uploadedAttachments?.length ?? queuedDraft.attachments.length
-          }
-          onEdit={onEditQueuedDraft}
-          onDelete={onDeleteQueuedDraft}
-        />
-      )}
-
-      {!hasQuestionPanel && <div className="relative mx-auto max-w-[54.25rem]">
+      {!hasQuestionPanel && <div className="pointer-events-auto relative mx-auto max-w-[54.25rem]">
         {showFileDropdown && filteredFiles.length > 0 && (
           <div
             ref={fileDropdownRef}
@@ -382,10 +394,7 @@ export default function ChatComposer({
         <PromptInput
           onSubmit={onSubmit as (event: FormEvent<HTMLFormElement>) => void}
           status={isLoading ? 'streaming' : 'ready'}
-          className={[
-            isTextareaExpanded ? 'chat-input-expanded' : '',
-            hasActivityIndicator ? 'rounded-t-none' : '',
-          ].filter(Boolean).join(' ')}
+          className={isTextareaExpanded ? 'chat-input-expanded' : ''}
           {...getRootProps()}
         >
           {isDragActive && (
@@ -446,120 +455,102 @@ export default function ChatComposer({
             />
         </PromptInputBody>
 
-        <PromptInputFooter className="flex-wrap gap-y-1">
-          <PromptInputTools className="min-w-0">
-            <PromptInputButton
-              tooltip={{ content: t('input.attachFiles') }}
-              onClick={openAttachmentPicker}
-              aria-label={t('input.attachFiles')}
-            >
-              <PaperclipIcon />
-            </PromptInputButton>
+        <PromptInputFooter className="w-full flex-col items-stretch gap-1 border-t-0 px-3 pb-2.5 pt-1">
+          <div className="flex w-full items-center justify-between gap-2">
+            <PromptInputTools className="min-w-0 shrink items-center gap-1.5">
+              <ComposerMoreMenu
+                hasInput={hasInput}
+                slashCommandsCount={slashCommandsCount}
+                tokenBudget={tokenBudget}
+                onOpenAttachmentPicker={openAttachmentPicker}
+                onToggleCommandMenu={onToggleCommandMenu}
+                onOpenTranslateDialog={() => setIsTranslateDialogOpen(true)}
+                onShowTokenUsage={onShowTokenUsage}
+                onScheduleMessage={onScheduleMessage}
+                onClearInput={onClearInput}
+              />
 
-            {onVoiceTranscript && voiceAvailable && (
-              <VoiceInputButton state={voiceState} onToggle={voiceToggle} errorMsg={voiceError} />
-            )}
-
-            <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} />
-
-            <PromptInputButton
-              tooltip={{ content: t('input.showAllCommands') }}
-              onClick={onToggleCommandMenu}
-              className="relative"
-            >
-              <MessageSquareIcon />
-              {slashCommandsCount > 0 && (
-                <span
-                  className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground"
-                >
-                  {slashCommandsCount}
-                </span>
-              )}
-            </PromptInputButton>
-
-            <PromptInputButton
-              tooltip={{ content: '思考翻译设置' }}
-              onClick={() => setIsTranslateDialogOpen(true)}
-              aria-label="思考翻译设置"
-              className="hidden sm:inline-flex"
-            >
-              <LanguagesIcon className="h-4 w-4" />
-            </PromptInputButton>
-
-            {hasInput && (
               <PromptInputButton
-                tooltip={{ content: t('input.clearInput', { defaultValue: 'Clear input' }) }}
-                onClick={onClearInput}
-                className="hidden sm:flex"
+                tooltip={{ content: t('input.attachFiles') }}
+                onClick={openAttachmentPicker}
+                aria-label={t('input.attachFiles')}
+                className="hidden h-9 w-9 shrink-0 rounded-2xl border border-slate-200/80 bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground dark:border-white/[0.08] sm:inline-flex"
               >
-                <XIcon />
+                <PaperclipIcon />
               </PromptInputButton>
-            )}
 
-          </PromptInputTools>
+              {onVoiceTranscript && (
+                <VoiceInputButton state={voiceState} onToggle={voiceToggle} errorMsg={voiceError} />
+              )}
 
-          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <ScheduleMessagePopover
-              disabled={!input?.trim()}
-              onSchedule={onScheduleMessage}
-            />
+              <div className="hidden sm:inline-flex">
+                <TokenUsageSummary usage={tokenBudget} onClick={onShowTokenUsage} />
+              </div>
+            </PromptInputTools>
 
-            <ComposerModelMenu
-              effort={effort}
-              effortOptions={availableEffortOptions}
-              onSelectEffort={onSelectEffort}
-              model={model}
-              modelOptions={availableModelOptions}
-              onSelectModel={onSelectModel}
-              modelsLoading={modelsLoading}
-            />
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              <ScheduleMessagePopover
+                disabled={!input?.trim()}
+                onSchedule={onScheduleMessage}
+              />
 
-            <ComposerPermissionMenu
-              permissionMode={permissionMode}
-              permissionModes={availablePermissionModes}
-              onSelectPermissionMode={onSelectPermissionMode}
-              providerLabel={providerLabel}
-            />
+              <ComposerModelMenu
+                effort={effort}
+                effortOptions={availableEffortOptions}
+                onSelectEffort={onSelectEffort}
+                model={model}
+                modelOptions={availableModelOptions}
+                onSelectModel={onSelectModel}
+                modelsLoading={modelsLoading}
+              />
 
-            <PromptInputSubmit
-              onClick={
-                canQueueDraft
-                  ? (e: MouseEvent<HTMLButtonElement>) => {
-                      e.preventDefault();
-                      onSubmit(e);
-                    }
-                  : isLoading
-                    ? onAbortSession
-                    : isRecording
-                      ? (e: MouseEvent<HTMLButtonElement>) => {
-                          e.preventDefault();
-                          voiceStop({ send: true });
-                        }
-                      : undefined
-              }
-              disabled={
-                isLoading
-                  ? false
-                  : isRecording
+              <ComposerPermissionMenu
+                permissionMode={permissionMode}
+                permissionModes={availablePermissionModes}
+                onSelectPermissionMode={onSelectPermissionMode}
+                providerLabel={providerLabel}
+              />
+
+              <PromptInputSubmit
+                onClick={
+                  canQueueDraft
+                    ? (e: MouseEvent<HTMLButtonElement>) => {
+                        e.preventDefault();
+                        onSubmit(e);
+                      }
+                    : isLoading
+                      ? onAbortSession
+                      : isRecording
+                        ? (e: MouseEvent<HTMLButtonElement>) => {
+                            e.preventDefault();
+                            voiceStop({ send: true });
+                          }
+                        : undefined
+                }
+                disabled={
+                  isLoading
                     ? false
-                    : isTranscribing
-                      ? true
-                      : !input?.trim() && attachedFiles.length === 0
-              }
-              aria-label={submitAriaLabel}
-              title={submitAriaLabel}
-              className="h-10 w-10 sm:h-10 sm:w-10"
-            >
-              {isTranscribing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : canQueueDraft ? (
-                <ArrowUpIcon className="h-4 w-4" />
-              ) : undefined}
-            </PromptInputSubmit>
+                    : isRecording
+                      ? false
+                      : isTranscribing
+                        ? true
+                        : !input?.trim() && attachedFiles.length === 0
+                }
+                aria-label={submitAriaLabel}
+                title={submitAriaLabel}
+                className="h-10 w-10 shrink-0 rounded-2xl shadow-sm"
+              >
+                {isTranscribing ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : canQueueDraft ? (
+                  <ArrowUpIcon className="h-5 w-5" strokeWidth={2.2} />
+                ) : undefined}
+              </PromptInputSubmit>
+            </div>
           </div>
 
           <div
-            className={`order-last hidden basis-full px-2 text-center text-xs leading-4 text-muted-foreground/50 transition-opacity duration-200 lg:block ${
+            className={`hidden px-2 text-center text-xs leading-4 text-muted-foreground/50 transition-opacity duration-200 lg:block ${
               input?.trim() && !canQueueDraft ? 'opacity-0' : 'opacity-100'
             }`}
           >

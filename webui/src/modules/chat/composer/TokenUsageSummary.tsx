@@ -50,7 +50,7 @@ function TokenUsageSummary({ usage, onClick }: TokenUsageSummaryProps) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/70 bg-background/70 px-2 text-xs text-muted-foreground shadow-sm transition-colors hover:border-primary/25 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:gap-2 sm:px-2.5"
+      className="inline-flex h-9 items-center gap-1.5 rounded-2xl border border-slate-200/80 bg-muted/45 px-2.5 text-xs text-muted-foreground transition-colors hover:border-primary/30 hover:bg-muted/75 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:border-white/[0.08] sm:gap-2"
       title={t('chat:misc.tokensUsed', { count: usedTokens })}
       aria-label={t('chat:misc.showTokenUsage')}
     >

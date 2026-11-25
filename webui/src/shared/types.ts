@@ -379,6 +379,8 @@ export type ChatMessage = {
   memoryCitations?: MemoryCitation[];
   /** Lifecycle the provider reported for this tool call, when it reports one; otherwise the status is inferred from whether a result has arrived. */
   toolStatus?: string;
+  /** Elapsed execution duration in milliseconds derived from provider metadata or tool_use/tool_result timestamps. */
+  toolDurationMs?: number;
   quotaSnapshot?: AntigravityQuotaSnapshot;
   meta?: {
     model?: string;
@@ -665,7 +667,8 @@ export type BackgroundSendPrompt = {
 
 /** Viewport-relative placement box (right/bottom offsets plus max height and width) computed for a composer popover so the model and permission menus stay inside the window. */
 export type ComposerMenuAnchor = {
-  right: number;
+  left?: number;
+  right?: number;
   bottom: number;
   maxHeight: number;
   maxWidth: number;

@@ -17,7 +17,8 @@ const MENU_GAP = 8;
 export function useComposerMenuAnchor(
   isOpen: boolean,
   onClose: () => void,
-  preferredWidth = 320,
+  preferredWidth = 340,
+  align: 'left' | 'right' = 'right',
 ) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -29,14 +30,28 @@ export function useComposerMenuAnchor(
       return;
     }
 
+    const bottom = window.innerHeight - rect.top + MENU_GAP;
+    const maxHeight = Math.max(180, rect.top - MENU_GAP - VIEWPORT_MARGIN);
+
+    if (align === 'left') {
+      const left = Math.max(VIEWPORT_MARGIN, rect.left);
+      setAnchor({
+        left,
+        bottom,
+        maxHeight,
+        maxWidth: Math.max(220, Math.min(preferredWidth, window.innerWidth - left - VIEWPORT_MARGIN)),
+      });
+      return;
+    }
+
     const right = Math.max(VIEWPORT_MARGIN, window.innerWidth - rect.right);
     setAnchor({
       right,
-      bottom: window.innerHeight - rect.top + MENU_GAP,
-      maxHeight: Math.max(160, rect.top - MENU_GAP - VIEWPORT_MARGIN),
-      maxWidth: Math.max(200, Math.min(preferredWidth, window.innerWidth - right - VIEWPORT_MARGIN)),
+      bottom,
+      maxHeight,
+      maxWidth: Math.max(220, Math.min(preferredWidth, window.innerWidth - right - VIEWPORT_MARGIN)),
     });
-  }, [preferredWidth]);
+  }, [align, preferredWidth]);
 
   useEffect(() => {
     if (!isOpen) {

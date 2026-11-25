@@ -401,6 +401,8 @@ export function useProjectsState({
   }, [activeTab]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Controls visibility of the quick-settings control center drawer opened from the workspace header.
+  const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState<LoadingProgress | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -1253,6 +1255,7 @@ export function useProjectsState({
     selectedSession,
     activeTab,
     sidebarOpen,
+    quickSettingsOpen,
     isLoadingProjects,
     loadingProgress,
     showSettings,
@@ -1261,6 +1264,7 @@ export function useProjectsState({
     newSessionTrigger,
     setActiveTab,
     setSidebarOpen,
+    setQuickSettingsOpen,
     setShowSettings,
     openSettings,
     fetchProjects,

@@ -899,8 +899,16 @@ export default function AntigravityAccountManager({
 
       {/* Add Account Modal (Compact & Intuitive) */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-3 backdrop-blur-xs">
-          <div className="flex w-full max-w-md flex-col rounded-2xl border border-border/80 bg-card p-5 shadow-2xl space-y-4">
+        <div
+          className="fixed inset-0 z-[9500] flex items-center justify-center bg-slate-900/35 p-3 backdrop-blur-sm dark:bg-black/60"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && oauthStep !== 'verifying') {
+              resetOAuthState();
+              setIsModalOpen(false);
+            }
+          }}
+        >
+          <div className="popover-enter flex w-full max-w-md flex-col space-y-4 rounded-2xl border border-slate-200/80 bg-card/95 p-5 shadow-2xl backdrop-blur-xl dark:border-white/[0.09]">
             {/* Modal Title */}
             <div className="flex items-center justify-between border-b border-border/70 pb-3">
               <div className="flex items-center gap-2">

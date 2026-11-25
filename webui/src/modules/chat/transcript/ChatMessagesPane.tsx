@@ -10,7 +10,7 @@ import type { ChatMessage,
   ProviderModelActions,
   ProviderModelsDefinition } from '@/shared/types';
 import { getIntrinsicMessageKey } from '@/modules/chat/utils/messageKeys';
-import { groupConsecutiveTools, isToolGroupItem } from '@/modules/chat/utils/toolGrouping';
+import { groupAgentExecutionSteps, isToolGroupItem } from '@/modules/chat/utils/toolGrouping';
 import { useLazyRowObserver } from '@/modules/chat/hooks/useLazyRowObserver';
 import LazyMessageRow from '@/modules/chat/transcript/LazyMessageRow';
 import MessageComponent from '@/modules/chat/transcript/MessageComponent';
@@ -161,7 +161,7 @@ function ChatMessagesPane({
   const { t } = useTranslation('chat');
   const lazyRows = useLazyRowObserver(scrollContainerRef);
   const groupedVisibleMessages = useMemo(
-    () => groupConsecutiveTools(visibleMessages, Boolean(showThinking)),
+    () => groupAgentExecutionSteps(visibleMessages, Boolean(showThinking)),
     [visibleMessages, showThinking],
   );
 
@@ -203,21 +203,19 @@ function ChatMessagesPane({
       onWheel={onWheel}
       onTouchMove={onTouchMove}
       className={`chat-messages-pane relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden pt-3 sm:pt-4 ${
-        hasActivityIndicator ? 'pb-12 sm:pb-14' : 'pb-3 sm:pb-4'
+        hasActivityIndicator ? 'pb-14 sm:pb-16' : 'pb-4 sm:pb-5'
       }`}
     >
       {chatMessages.length > 0 && (
-        <div className="pointer-events-none sticky right-4 top-3 z-10 mb-2 flex justify-end sm:px-4">
-          <div className="pointer-events-auto">
-            <ChatExportMenu
-              messages={chatMessages}
-              sessionTitle={selectedSession?.summary || selectedSession?.title}
-              provider={provider}
-              selectedProject={selectedProject}
-              createDiff={createDiff}
-              onLoadFullTranscript={onLoadFullTranscript}
-            />
-          </div>
+        <div className="mx-auto flex w-full max-w-[54.25rem] justify-end px-4 pb-1 pt-0.5">
+          <ChatExportMenu
+            messages={chatMessages}
+            sessionTitle={selectedSession?.summary || selectedSession?.title}
+            provider={provider}
+            selectedProject={selectedProject}
+            createDiff={createDiff}
+            onLoadFullTranscript={onLoadFullTranscript}
+          />
         </div>
       )}
       <div className="mx-auto w-full max-w-[54.25rem] space-y-3 px-4 sm:space-y-4">
@@ -298,6 +296,32 @@ function ChatMessagesPane({
             let prevMessage: ChatMessage | null = null;
             const rowCount = groupedVisibleMessages.length;
 
+            // Identify the last user turn and the final tool group in that turn so older
+            // conversations never revert to "running" when a new turn begins.
+            let lastUserIndex = -1;
+            let lastToolGroupIndex = -1;
+            for (let i = 0; i < rowCount; i++) {
+              const entry = groupedVisibleMessages[i];
+              if (!isToolGroupItem(entry) && entry.type === 'user') {
+                lastUserIndex = i;
+              }
+              if (isToolGroupItem(entry)) {
+                lastToolGroupIndex = i;
+              }
+            }
+
+            const hasFinalAssistantReplyAfterLastGroup =
+              lastToolGroupIndex >= 0
+              && groupedVisibleMessages.slice(lastToolGroupIndex + 1).some(
+                (entry) =>
+                  !isToolGroupItem(entry)
+                  && entry.type === 'assistant'
+                  && !entry.isThinking
+                  && !entry.isToolUse
+                  && !entry.isStreaming
+                  && Boolean((entry.content || '').trim()),
+              );
+
             return groupedVisibleMessages.map((item, index) => {
               // Rows near the tail mount their content on first commit so the
               // initial scroll-to-bottom measures real heights; older rows
@@ -307,6 +331,12 @@ function ChatMessagesPane({
               if (isToolGroupItem(item)) {
                 const groupPrevMessage = prevMessage;
                 prevMessage = item.messages[item.messages.length - 1] || prevMessage;
+
+                const isCurrentActiveGroup =
+                  Boolean(isProcessing)
+                  && index === lastToolGroupIndex
+                  && index > lastUserIndex
+                  && !hasFinalAssistantReplyAfterLastGroup;
 
                 return (
                   <LazyMessageRow
@@ -327,6 +357,7 @@ function ChatMessagesPane({
                       showThinking={showThinking}
                       selectedProject={selectedProject}
                       provider={provider}
+                      isSessionProcessing={isCurrentActiveGroup}
                     />
                   </LazyMessageRow>
                 );

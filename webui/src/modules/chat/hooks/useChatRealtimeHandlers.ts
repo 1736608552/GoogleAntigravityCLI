@@ -232,6 +232,15 @@ export function useChatRealtimeHandlers({
         && msg.kind !== 'permission_cancelled';
 
       if (sid && shouldPersist) {
+        if (accumulatedStreamRef.current && (msg.kind === 'tool_use' || msg.kind === 'text')) {
+          if (streamTimerRef.current) {
+            clearTimeout(streamTimerRef.current);
+            streamTimerRef.current = null;
+          }
+          sessionStore.updateStreaming(sid, accumulatedStreamRef.current, provider);
+          sessionStore.finalizeStreaming(sid);
+          accumulatedStreamRef.current = '';
+        }
         sessionStore.appendRealtime(sid, msg as unknown as NormalizedMessage);
       }
 

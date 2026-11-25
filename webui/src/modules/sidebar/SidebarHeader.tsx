@@ -1,7 +1,7 @@
 import { Activity, Archive, Folder, FolderPlus, MessageSquare, Plus, RefreshCw, Search, X, PanelLeftClose } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
-import { Button, Input, Tooltip } from '@/shared/ui';
+import { Input, Tooltip } from '@/shared/ui';
 import { CLOUDCLI_WORDMARK_FONT_FAMILY } from '@/shared/constants';
 import { IS_PLATFORM,cn } from '@/shared/utils';
 import type { SidebarSearchMode } from '@/shared/types';
@@ -37,7 +37,7 @@ function LogoBlock({ t }: { t: TFunction }) {
       <img
         src="/logo.svg"
         alt="Antigravity"
-        className="h-7 w-7 flex-shrink-0 object-contain drop-shadow-sm select-none"
+        className="h-7 w-7 flex-shrink-0 select-none object-contain drop-shadow-sm"
       />
       <h1
         className="truncate text-sm font-bold tracking-tight text-foreground"
@@ -80,11 +80,11 @@ export default function SidebarHeader({
   const runningBadgeText = runningSessionsCount > 99 ? '99+' : String(runningSessionsCount);
 
   return (
-    <div className="flex-shrink-0">
-      {/* Desktop header */}
+    <div className="flex-shrink-0 border-b border-border/50">
+      {/* Unified responsive header */}
       <div
-        className="hidden px-3 pb-2 pt-3 md:block"
-        style={{}}
+        className="px-3.5 pb-3 pt-3.5"
+        style={isPWA && isMobile ? { paddingTop: 'calc(14px + env(safe-area-inset-top, 0px))' } : {}}
       >
         <div className="flex items-center justify-between gap-2">
           {IS_PLATFORM ? (
@@ -99,137 +99,144 @@ export default function SidebarHeader({
             <LogoBlock t={t} />
           )}
 
-          <div className="flex flex-shrink-0 items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+          <div className="flex flex-shrink-0 items-center gap-1">
+            <button
+              type="button"
+              className="shadow-xs flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200/75 bg-card/85 text-muted-foreground transition-all hover:bg-card hover:text-foreground active:scale-95 dark:border-white/[0.08]"
               onClick={onRefresh}
               disabled={isRefreshing}
               title={t('tooltips.refresh')}
+              aria-label={t('tooltips.refresh')}
             >
               <RefreshCw
                 className={`h-3.5 w-3.5 ${
                   isRefreshing ? 'animate-spin' : ''
                 }`}
               />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+            </button>
+            <button
+              type="button"
+              className="shadow-xs flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground transition-all hover:bg-primary/90 active:scale-95"
               onClick={onCreateProject}
               title={t('tooltips.createProject')}
+              aria-label={t('tooltips.createProject')}
             >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
-              onClick={onCollapseSidebar}
-              title={t('tooltips.hideSidebar')}
-            >
-              <PanelLeftClose className="h-3.5 w-3.5" />
-            </Button>
+              {isMobile ? <FolderPlus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            </button>
+            {!isMobile && (
+              <button
+                type="button"
+                className="shadow-xs hidden h-8 w-8 items-center justify-center rounded-xl border border-slate-200/75 bg-card/85 text-muted-foreground transition-all hover:bg-card hover:text-foreground active:scale-95 dark:border-white/[0.08] md:flex"
+                onClick={onCollapseSidebar}
+                title={t('tooltips.hideSidebar')}
+                aria-label={t('tooltips.hideSidebar')}
+              >
+                <PanelLeftClose className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
         <GitHubStarBadge />
 
-        {/* Search bar */}
+        {/* Search mode & input */}
         {showSearchTools && (
-          <div className="mt-2.5 space-y-2">
-            {/* Search mode toggle */}
-            <div className="flex rounded-lg bg-muted/50 p-0.5">
+          <div className="mt-3 space-y-2.5">
+            {/* Search mode segmented bar */}
+            <div className="flex items-center gap-0.5 rounded-xl border border-slate-200/70 bg-muted/55 p-1 dark:border-white/[0.08]">
               <button
+                type="button"
                 onClick={() => onSearchModeChange('projects')}
                 aria-pressed={searchMode === 'projects'}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
+                  'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-all',
                   searchMode === 'projects'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? 'bg-card text-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                <Folder className="h-3 w-3" />
-                {t('search.modeProjects')}
+                <Folder className="h-3.5 w-3.5" />
+                <span className="truncate">{t('search.modeProjects')}</span>
               </button>
               <button
+                type="button"
                 onClick={() => onSearchModeChange('conversations')}
                 aria-pressed={searchMode === 'conversations'}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
+                  'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-all',
                   searchMode === 'conversations'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? 'bg-card text-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                <MessageSquare className="h-3 w-3" />
-                {t('search.modeConversations')}
+                <MessageSquare className="h-3.5 w-3.5" />
+                <span className="truncate">{t('search.modeConversations')}</span>
               </button>
               <Tooltip content={t('search.runningTooltip', 'Running sessions')} position="top">
                 <button
+                  type="button"
                   onClick={() => onSearchModeChange('running')}
                   aria-pressed={searchMode === 'running'}
                   aria-label={t('search.runningTooltip', 'Running sessions')}
                   title={t('search.runningTooltip', 'Running sessions')}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
+                    'flex items-center justify-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium transition-all',
                     searchMode === 'running'
-                      ? "bg-background shadow-sm text-foreground ring-1 ring-emerald-500/15"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? 'bg-card text-foreground shadow-xs ring-1 ring-emerald-500/20'
+                      : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  <span className="relative flex h-3 w-3 items-center justify-center">
-                    <Activity className={cn("h-3 w-3", runningSessionsCount > 0 && "text-emerald-500")} />
-                    {runningSessionsCount > 0 && (
-                      <span className="absolute -right-2.5 -top-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-emerald-500 px-0.5 text-[8px] font-semibold leading-none text-white shadow-sm ring-1 ring-background">
-                        {runningBadgeText}
-                      </span>
-                    )}
-                  </span>
+                  <Activity className={cn('h-3.5 w-3.5', runningSessionsCount > 0 && 'text-emerald-500')} />
+                  {runningSessionsCount > 0 && (
+                    <span className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums leading-none text-emerald-700 dark:text-emerald-300">
+                      {runningBadgeText}
+                    </span>
+                  )}
+                  <span className="sr-only">{t('search.modeRunning', 'Running')}</span>
                 </button>
               </Tooltip>
               <Tooltip content={t('search.archiveOnlyTooltip', 'Archive only')} position="top">
                 <button
+                  type="button"
                   onClick={() => onSearchModeChange('archived')}
                   aria-pressed={searchMode === 'archived'}
                   aria-label={t('search.archiveOnlyTooltip', 'Archive only')}
                   title={t('search.archiveOnlyTooltip', 'Archive only')}
                   className={cn(
-                    "flex items-center justify-center rounded-md px-2.5 py-1.5 text-xs font-normal transition-all",
+                    'flex items-center justify-center rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all',
                     searchMode === 'archived'
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      ? 'bg-card text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  <Archive className="h-3 w-3" />
+                  <Archive className="h-3.5 w-3.5" />
                 </button>
               </Tooltip>
             </div>
+
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/55" />
               <Input
                 type="text"
                 placeholder={searchPlaceholder}
                 value={searchFilter}
                 onChange={(event) => onSearchFilterChange(event.target.value)}
-                className="nav-search-input h-9 rounded-xl border-0 pl-9 pr-14 text-sm transition-all duration-200 placeholder:text-muted-foreground/40 focus-visible:ring-0 focus-visible:ring-offset-0"
+                className="shadow-xs h-9 rounded-xl border border-slate-200/75 bg-card/85 pl-9 pr-12 text-sm transition-all duration-150 placeholder:text-muted-foreground/45 focus-visible:border-primary/35 focus-visible:ring-2 focus-visible:ring-primary/15 dark:border-white/[0.08]"
               />
               {searchFilter ? (
                 <button
+                  type="button"
                   onClick={onClearSearchFilter}
                   aria-label={t('tooltips.clearSearch')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 hover:bg-accent"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
                 >
-                  <X className="h-3 w-3 text-muted-foreground" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               ) : (
                 <kbd
                   aria-hidden
                   title={t('tooltips.openCommandPalette')}
-                  className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded border border-border/60 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground md:inline-flex"
+                  className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded-md border border-border/60 bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground md:inline-flex"
                 >
                   {MOD_KEY}
                   <span>K</span>
@@ -239,141 +246,6 @@ export default function SidebarHeader({
           </div>
         )}
       </div>
-
-      {/* Desktop divider */}
-      <div className="nav-divider hidden md:block" />
-
-      {/* Mobile header */}
-      <div
-        className="p-3 pb-2 md:hidden"
-        style={isPWA && isMobile ? { paddingTop: '16px' } : {}}
-      >
-        <div className="flex items-center justify-between">
-          {IS_PLATFORM ? (
-            <a
-              href="https://cloudcli.ai/dashboard"
-              className="flex min-w-0 items-center gap-2.5 transition-opacity active:opacity-70"
-              title={t('tooltips.viewEnvironments')}
-            >
-              <LogoBlock t={t} />
-            </a>
-          ) : (
-            <LogoBlock t={t} />
-          )}
-
-          <div className="flex flex-shrink-0 gap-1.5">
-            <button
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted/50 transition-all active:scale-95"
-              onClick={onRefresh}
-              disabled={isRefreshing}
-            >
-              <RefreshCw className={`h-4 w-4 text-muted-foreground ${isRefreshing ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/90 text-primary-foreground transition-all active:scale-95"
-              onClick={onCreateProject}
-            >
-              <FolderPlus className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile search */}
-        {showSearchTools && (
-          <div className="mt-2.5 space-y-2">
-            <div className="flex rounded-lg bg-muted/50 p-0.5">
-              <button
-                onClick={() => onSearchModeChange('projects')}
-                aria-pressed={searchMode === 'projects'}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
-                  searchMode === 'projects'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <Folder className="h-3 w-3" />
-                {t('search.modeProjects')}
-              </button>
-              <button
-                onClick={() => onSearchModeChange('conversations')}
-                aria-pressed={searchMode === 'conversations'}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
-                  searchMode === 'conversations'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <MessageSquare className="h-3 w-3" />
-                {t('search.modeConversations')}
-              </button>
-              <Tooltip content={t('search.runningTooltip', 'Running sessions')} position="top">
-                <button
-                  onClick={() => onSearchModeChange('running')}
-                  aria-pressed={searchMode === 'running'}
-                  aria-label={t('search.runningTooltip', 'Running sessions')}
-                  title={t('search.runningTooltip', 'Running sessions')}
-                  className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
-                    searchMode === 'running'
-                      ? "bg-background shadow-sm text-foreground ring-1 ring-emerald-500/15"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <span className="relative flex h-3 w-3 items-center justify-center">
-                    <Activity className={cn("h-3 w-3", runningSessionsCount > 0 && "text-emerald-500")} />
-                    {runningSessionsCount > 0 && (
-                      <span className="absolute -right-2.5 -top-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-emerald-500 px-0.5 text-[8px] font-semibold leading-none text-white shadow-sm ring-1 ring-background">
-                        {runningBadgeText}
-                      </span>
-                    )}
-                  </span>
-                  <span className="sr-only">{t('search.modeRunning', 'Running')}</span>
-                </button>
-              </Tooltip>
-              <Tooltip content={t('search.archiveOnlyTooltip', 'Archive only')} position="top">
-                <button
-                  onClick={() => onSearchModeChange('archived')}
-                  aria-pressed={searchMode === 'archived'}
-                  aria-label={t('search.archiveOnlyTooltip', 'Archive only')}
-                  title={t('search.archiveOnlyTooltip', 'Archive only')}
-                  className={cn(
-                    "flex items-center justify-center rounded-md px-2.5 py-1.5 text-xs font-normal transition-all",
-                    searchMode === 'archived'
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <Archive className="h-3 w-3" />
-                </button>
-              </Tooltip>
-            </div>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
-              <Input
-                type="text"
-                placeholder={searchPlaceholder}
-                value={searchFilter}
-                onChange={(event) => onSearchFilterChange(event.target.value)}
-                className="nav-search-input h-10 rounded-xl border-0 pl-10 pr-9 text-sm transition-all duration-200 placeholder:text-muted-foreground/40 focus-visible:ring-0 focus-visible:ring-offset-0"
-              />
-              {searchFilter && (
-                <button
-                  onClick={onClearSearchFilter}
-                  aria-label={t('tooltips.clearSearch')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 hover:bg-accent"
-                >
-                  <X className="h-3.5 w-3.5 text-muted-foreground" />
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Mobile divider */}
-      <div className="nav-divider md:hidden" />
     </div>
   );
 }

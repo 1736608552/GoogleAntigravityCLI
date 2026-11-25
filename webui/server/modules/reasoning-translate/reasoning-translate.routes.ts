@@ -26,7 +26,22 @@ async function initTranslator() {
   await cache.load();
   try {
     const raw = await fs.readFile(CONFIG_FILE, 'utf8');
-    appConfig = { ...defaultReasoningConfig(), ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw) as Partial<AppReasoningConfig>;
+    appConfig = {
+      ...defaultReasoningConfig(),
+      ...parsed,
+      engines: {
+        ...defaultReasoningConfig().engines,
+        ...(parsed.engines || {}),
+      },
+    };
+    // 首次升级平滑迁移：默认改用 Microsoft Bing 免费翻译，不再强依赖模型配置
+    if (!appConfig.migratedToBing) {
+      appConfig.engine = 'bing';
+      appConfig.migratedToBing = true;
+      await fs.mkdir(CONFIG_DIR, { recursive: true });
+      await fs.writeFile(CONFIG_FILE, JSON.stringify(appConfig, null, 2), 'utf8');
+    }
   } catch {
     appConfig = defaultReasoningConfig();
   }

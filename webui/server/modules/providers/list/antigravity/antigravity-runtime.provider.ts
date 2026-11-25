@@ -26,17 +26,22 @@ import {
 } from './antigravity-proxy.js';
 import { antigravityAccountsService } from './antigravity-accounts.service.js';
 import { localizeEnglishThought, humanizeAntigravityError } from './antigravity-chinese-filter.js';
+import {
+  createAntigravityPermissionGate,
+  getAntigravityPendingApprovals,
+  resolveAntigravityToolApproval,
+} from './antigravity-permission-gate.js';
 export { localizeEnglishThought, humanizeAntigravityError };
 
 const spawnFunction = crossSpawn;
 const activeAntigravityProcesses = new Map<string, ChildProcess>();
 const activeAbortControllers = new Map<string, AbortController>();
 
-interface ManagedAntigravityProcess {
+type ManagedAntigravityProcess = {
   proc: ChildProcess;
   keys: Set<string>;
   spawnedAt: number;
-}
+};
 
 const managedProcesses = new Set<ManagedAntigravityProcess>();
 const processKeyIndex = new Map<string, ManagedAntigravityProcess>();
@@ -226,23 +231,49 @@ function reapOrphanedAntigravityProcesses(): void {
 // 禁用模块加载时顶层无差别强杀：防止在多会话或长任务执行时，误杀当前活跃进程与后台子任务
 // reapOrphanedAntigravityProcesses();
 
-function resolveAntigravityPermissionArgs(permissionMode?: string, skipPermissions?: boolean): string[] {
-  if (skipPermissions || permissionMode === 'bypassPermissions' || permissionMode === 'auto') {
+/**
+ * Maps frontend permission modes to Antigravity CLI flags.
+ * Exported for `server/modules/providers/tests/antigravity-runtime.test.ts`.
+ */
+export function resolveAntigravityPermissionArgs(permissionMode?: string, skipPermissions?: boolean): string[] {
+  if (permissionMode === 'bypassPermissions' || permissionMode === 'auto') {
     return ['--dangerously-skip-permissions'];
   }
   switch (permissionMode) {
     case 'plan':
-      return ['--mode', 'plan'];
+      // CLI `--mode plan` returns an empty 0-token response in non-interactive stream-json mode;
+      // keep execution constrained via `--sandbox` paired with the Plan Mode runtime policy prompt.
+      return ['--sandbox'];
     case 'accept-edits':
     case 'acceptEdits':
-      return ['--mode', 'accept-edits'];
+      return ['--mode', 'accept-edits', '--sandbox'];
     case 'sandbox':
       return ['--sandbox'];
+    case 'default':
+      return ['--sandbox'];
     default:
-      // In web streaming non-interactive mode, auto-approve commands and edits
-      // so tools do not hang waiting for interactive TTY prompts that never arrive.
-      return ['--dangerously-skip-permissions'];
+      return skipPermissions ? ['--dangerously-skip-permissions'] : ['--sandbox'];
   }
+}
+
+/**
+ * Generates an explicit runtime permission policy prefix for restricted modes (`plan` and `default`)
+ * so the non-interactive CLI enforces the promises shown in the UI permission selector.
+ * Exported for `server/modules/providers/tests/antigravity-runtime.test.ts`.
+ */
+export function resolveAntigravityPermissionPolicy(
+  permissionMode?: string,
+  _skipPermissions?: boolean,
+  _workingDir?: string,
+): string {
+  if (permissionMode === 'plan') {
+    return `【🔒 权限策略：计划模式 (Plan Mode)】
+当前会话处于只读规划模式，请仅使用只读工具查阅代码并输出方案。`;
+  }
+
+  // 默认受限模式 (default) 与 acceptEdits 均由 --sandbox 及 PreToolUse Hook 门卫在底层强制拦截与弹窗审批，
+  // 不再向用户 prompt 拼接大段策略说明，避免污染聊天历史气泡。
+  return '';
 }
 
 function resolveAntigravityModelAndEffort(
@@ -259,25 +290,25 @@ function resolveAntigravityModelAndEffort(
       ? effort.toLowerCase().trim()
       : undefined;
 
-  // 关键修复：仅针对 Google 原生 gemini-* 模型剥离历史后缀（如 gemini-3.8-flash-high -> gemini-3.8-flash）
+  // 关键修复：仅针对 Google 原生 gemini-* 模型剥离历史/档位后缀（如 gemini-4-hydrogen-xhigh -> gemini-4-hydrogen）
   // 严禁将三方模型 gpt-oss-120b-medium 截断为不存在的 gpt-oss-120b
   if (resolvedModel.startsWith('gemini-')) {
-    const legacyMatch = resolvedModel.match(/^(.+)-(high|medium|low)$/);
+    const legacyMatch = resolvedModel.match(/^(.+)-(xhigh|high|medium|low|max)$/i);
     if (legacyMatch) {
       resolvedModel = legacyMatch[1];
       if (!resolvedEffort) {
-        resolvedEffort = legacyMatch[2];
+        resolvedEffort = legacyMatch[2].toLowerCase();
       }
     }
   }
 
-  // Antigravity CLI 规范：仅原生 gemini-* 模型支持并强制要求 --effort 参数 (low/medium/high)
+  // Antigravity CLI 规范：仅原生 gemini-* 模型支持并强制要求 --effort 参数 (low/medium/high/xhigh/max)
   // 严禁向所有三方模型（claude-opus-4-6-thinking、claude-sonnet-4-6、gpt-oss-120b-medium 等）传递 --effort，否则 CLI 立即报错拒绝启动
   const supportsEffort = resolvedModel.startsWith('gemini-');
   if (supportsEffort) {
-    // 关键修复：Antigravity CLI 对所有 gemini-* 模型强制要求 --effort (low/medium/high)
+    // 关键修复：Antigravity CLI 对所有 gemini-* 模型强制要求 --effort (low/medium/high/xhigh/max)
     // 如果前端未指定或传入了 'default' / 空值，默认设定为 'high' (深度思考)
-    if (!resolvedEffort || !['low', 'medium', 'high'].includes(resolvedEffort)) {
+    if (!resolvedEffort || !['low', 'medium', 'high', 'xhigh', 'max'].includes(resolvedEffort)) {
       resolvedEffort = 'high';
     }
     // gemini-3.1-pro 仅支持 high 和 low
@@ -354,6 +385,7 @@ type TurnAttemptParams = {
   effort?: string;
   permissionMode?: string;
   skipPermissions?: boolean;
+  hookAddDir?: string;
   images?: unknown;
   files?: unknown;
   capturedSessionId: string | null;
@@ -365,6 +397,7 @@ type TurnAttemptParams = {
   onTextDelta: (delta: string) => void;
   onFullText: (full: string) => void;
   onProcessSpawned: (proc: ChildProcess) => void;
+  spawnImpl?: typeof spawnFunction;
 };
 
 type TurnAttemptResult = {
@@ -436,10 +469,11 @@ function ensureAntigravityGlobalRules(workingDir?: string): void {
 
 /**
  * Executes a single Antigravity CLI process turn.
- * Implements delta deduplication against \`accumulatedText\` so any re-generated text
+ * Implements delta deduplication against `accumulatedText` so any re-generated text
  * from retries is smoothly deduplicated without emitting redundant tokens to the client.
+ * Exported for `server/modules/providers/tests/antigravity-runtime.test.ts`.
  */
-function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptResult> {
+export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptResult> {
   return new Promise((resolve, reject) => {
     const {
       command,
@@ -448,6 +482,7 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
       effort,
       permissionMode,
       skipPermissions,
+      hookAddDir,
       images,
       files,
       capturedSessionId,
@@ -459,6 +494,7 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
       onTextDelta,
       onFullText,
       onProcessSpawned,
+      spawnImpl = spawnFunction,
     } = params;
 
     if (abortSignal.aborted) {
@@ -484,7 +520,7 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
       baseArgs.push('--model', resolvedModel);
     }
 
-    if (resolvedEffort && ['low', 'medium', 'high'].includes(resolvedEffort)) {
+    if (resolvedEffort && ['low', 'medium', 'high', 'xhigh', 'max'].includes(resolvedEffort)) {
       baseArgs.push('--effort', resolvedEffort);
     }
 
@@ -494,6 +530,9 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
 
     const permArgs = resolveAntigravityPermissionArgs(permissionMode, skipPermissions);
     baseArgs.push(...permArgs);
+    if (hookAddDir) {
+      baseArgs.push('--add-dir', hookAddDir);
+    }
 
     const BOOST_MODE_INSTRUCTION = `【🚀 Antigravity Boost 极致攻坚模式已激活】
 你当前正处于 Boost 深度推演与高精度攻坚模式，请严格执行以下准则：
@@ -502,6 +541,10 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
 3. 【持续攻坚不中断】：若遇到中间工具报错或异常，必须自主反思并连续自愈推进，直到任务目标完全达成。`;
 
     let prompt = command || '';
+    const permissionPolicy = resolveAntigravityPermissionPolicy(permissionMode, skipPermissions, workingDir);
+    const hasPermissionPolicy = prompt.includes('【🔒 权限策略：') || prompt.includes('【🛡️ 权限策略：');
+    const policyBlock = permissionPolicy && !hasPermissionPolicy ? `${permissionPolicy}\n\n` : '';
+
     if (prompt && !prompt.includes(CHINESE_ENFORCEMENT_PREFIX)) {
       if (isBoostCommand) {
         if (prompt.startsWith('/')) {
@@ -509,16 +552,18 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
           if (firstLineEnd !== -1) {
             const firstLine = prompt.slice(0, firstLineEnd);
             const rest = prompt.slice(firstLineEnd + 1);
-            prompt = `${firstLine}\n\n${BOOST_MODE_INSTRUCTION}\n\n${CHINESE_ENFORCEMENT_PREFIX}${rest}`;
+            prompt = `${firstLine}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${rest}`;
           } else {
-            prompt = `${prompt}\n\n${BOOST_MODE_INSTRUCTION}\n\n${CHINESE_ENFORCEMENT_PREFIX}`;
+            prompt = `${prompt}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}`;
           }
         } else {
-          prompt = `${BOOST_MODE_INSTRUCTION}\n\n${CHINESE_ENFORCEMENT_PREFIX}${prompt}`;
+          prompt = `${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${prompt}`;
         }
       } else {
-        prompt = CHINESE_ENFORCEMENT_PREFIX + prompt;
+        prompt = `${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${prompt}`;
       }
+    } else if (prompt && policyBlock) {
+      prompt = `${policyBlock}${prompt}`;
     }
     const hasAttachments =
       normalizeAttachmentDescriptors(images).length > 0 ||
@@ -558,7 +603,7 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
 
     let antigravityProcess: ChildProcess;
     try {
-      antigravityProcess = spawnFunction(binPath, baseArgs, {
+      antigravityProcess = spawnImpl(binPath, baseArgs, {
         cwd: workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: childEnv,
@@ -572,20 +617,11 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
 
     let isSettled = false;
     let watchdogTimer: NodeJS.Timeout | null = null;
-    let settleDebounceTimer: NodeJS.Timeout | null = null;
     let turnConversationId = capturedSessionId;
     let turnUsage: AnyRecord | undefined = undefined;
     let spawnedSubagentsCount = 0;
 
-    const clearSettleTimer = () => {
-      if (settleDebounceTimer) {
-        clearTimeout(settleDebounceTimer);
-        settleDebounceTimer = null;
-      }
-    };
-
     const onAbort = () => {
-      clearSettleTimer();
       if (watchdogTimer) {
         clearInterval(watchdogTimer);
         watchdogTimer = null;
@@ -601,7 +637,6 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
       if (isSettled) return;
       isSettled = true;
       abortSignal.removeEventListener('abort', onAbort);
-      clearSettleTimer();
 
       if (watchdogTimer) {
         clearInterval(watchdogTimer);
@@ -627,8 +662,8 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
     let lastActiveToolCall: { id: string; name: string } | null = null;
     let turnStepCounter = 0;
 
-    const processOutputLine = (line: string) => {
-      if (!line || !line.trim()) return;
+    const processOutputLine = (line: string, allowAfterSettled = false) => {
+      if ((!allowAfterSettled && isSettled) || !line || !line.trim()) return;
 
       // Parse JSON stream event
       let obj: AnyRecord;
@@ -707,7 +742,6 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
         // Tool calls and tool execution results
         const toolInfo = update.tool_info as AnyRecord | undefined;
         if (toolInfo && toolInfo.name) {
-          clearSettleTimer();
           if (toolInfo.name === 'invoke_subagent' || toolInfo.name === 'manage_subagents' || toolInfo.name === 'define_subagent') {
             spawnedSubagentsCount++;
           }
@@ -827,8 +861,17 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
         }
 
 
-        // Thought / reasoning
-        const thought = update.thought || update.thinking;
+        // Thought / reasoning（兼容全量与增量字段，确保实时流中即可看到思考内容）
+        const thought =
+          update.thought ||
+          update.thinking ||
+          update.reasoning ||
+          update.thinking_delta ||
+          update.thought_delta ||
+          update.reasoning_delta ||
+          ((stepType.includes('think') || stepType.includes('reason'))
+            ? (update.content || update.text_delta)
+            : '');
         if (thought && typeof thought === 'string' && thought.trim()) {
           ws.send(createNormalizedMessage({
             kind: 'thinking',
@@ -838,26 +881,10 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
           }));
         }
 
-        const scheduleSettleCheck = (delayMs: number = 3000) => {
-          clearSettleTimer();
-          if (isSettled || lastActiveToolCall) return;
-          settleDebounceTimer = setTimeout(() => {
-            if (isSettled || lastActiveToolCall) return;
-            if (turnEmitted.trim().length > 0) {
-              console.log(`[Antigravity Runtime] ✅ 文本生成完毕且已静默 ${delayMs}ms，安全触发回合完成结算交付...`);
-              turnHasSucceeded = true;
-              finishSuccess();
-            }
-          }, delayMs);
-        };
-
-        const isStepDone =
-          update.state === 'DONE' ||
-          update.status === 'DONE' ||
-          update.state === 'COMPLETED' ||
-          update.status === 'COMPLETED';
-
         // Text delta streaming with delta deduplication
+        // 注意：绝不在阶段性文本输出后通过短时静默定时器提前结算，
+        // 因为 CLI 在等待子代理、schedule 定时器或后台命令唤醒期间不会发送 result 事件。
+        // 回合完结严格以 CLI 明确发出的 `result` / `done` 事件、进程退出或长程看门狗为准。
         if (typeof update.text_delta === 'string' && update.text_delta) {
           const delta = update.text_delta;
           ws.send(createNormalizedMessage({
@@ -869,11 +896,6 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
           }));
           turnEmitted += delta;
           onTextDelta(delta);
-          if (isStepDone) {
-            scheduleSettleCheck(2000);
-          } else {
-            scheduleSettleCheck(4000);
-          }
         } else if (
           (!stepType || stepType === 'agent_response' || stepType === 'planner_response') &&
           typeof update.content === 'string' &&
@@ -903,13 +925,6 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
             turnEmitted += content;
             onTextDelta(content);
           }
-          if (isStepDone) {
-            scheduleSettleCheck(2000);
-          } else {
-            scheduleSettleCheck(4000);
-          }
-        } else if (isStepDone && (!stepType || stepType === 'agent_response' || stepType === 'planner_response') && turnEmitted.trim().length > 0) {
-          scheduleSettleCheck(2000);
         }
         return;
       }
@@ -962,18 +977,19 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
       );
     }
 
-    // 动态看门狗超时：Boost 或深度模式下放宽到 600 秒（10分钟），普通对话放宽到 360 秒（6分钟）
+    // 动态看门狗超时：Boost、深度思考或已派发子代理的长程模式下放宽到 600 秒（10分钟），普通对话放宽到 360 秒（6分钟）
     let lastActivityTime = Date.now();
     const isBoostMode = Boolean(
       (command && /^\/boost\b/i.test(command.trim())) ||
       (command && /\[🚀.*Boost/i.test(command))
     );
-    const isLongRunningMode = Boolean(
+    const isBaseLongRunningMode = Boolean(
       isBoostMode ||
       (command && /^\/(goal|plan|schedule)\b/i.test(command.trim())) ||
-      effectiveEffort === 'high'
+      effectiveEffort === 'high' ||
+      effectiveEffort === 'xhigh' ||
+      effectiveEffort === 'max'
     );
-    const INACTIVITY_TIMEOUT_MS = isLongRunningMode ? 600_000 : 360_000;
 
     watchdogTimer = setInterval(() => {
       if (isSettled) {
@@ -984,29 +1000,23 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
         return;
       }
       const idleMs = Date.now() - lastActivityTime;
+      const inactivityTimeoutMs = (isBaseLongRunningMode || spawnedSubagentsCount > 0) ? 600_000 : 360_000;
 
-      // 核心防假死兜底 1：若模型已输出完整回复且无活动工具，静止超过 12 秒直接圆满结算交付，绝不让前端挂在“计算中”！
-      if (turnEmitted.trim().length > 0 && !lastActiveToolCall && idleMs > 12_000) {
-        console.log(`[Antigravity Runtime] ✅ 模型已输出完整文本且处于静止状态超过 ${Math.round(idleMs / 1000)}s，主动圆满结算退出，解除前端悬挂...`);
-        turnHasSucceeded = true;
-        finishSuccess();
-        return;
-      }
-
-      if (idleMs > INACTIVITY_TIMEOUT_MS) {
+      if (idleMs > inactivityTimeoutMs) {
         if (watchdogTimer) {
           clearInterval(watchdogTimer);
           watchdogTimer = null;
         }
-        // 核心防假死兜底 2：若达到超时上限但已输出了内容，作为成功收工交付
+        // 核心防假死兜底：达到真正超时上限且已产出实质内容时，先终止卡死的底层进程再收工交付，防止结算后继续泄漏推送
         if (turnEmitted.trim().length > 0) {
-          console.log(`[Antigravity Runtime] 🚨 活跃看门狗到达上限，但模型已输出内容 (${turnEmitted.length} 字)，作为成功收工交付`);
+          console.log(`[Antigravity Runtime] 🚨 活跃看门狗到达上限 (${Math.round(inactivityTimeoutMs / 1000)}s)，终止底层失联进程并收工交付 (${turnEmitted.length} 字)`);
           turnHasSucceeded = true;
           finishSuccess();
+          terminateAntigravityProcess(antigravityProcess);
           return;
         }
         console.warn(`[Antigravity Runtime] 🚨 活跃看门狗触发: 连续 ${Math.round(idleMs / 1000)} 秒无输出且未生成任何内容，终止底层进程...`);
-        lastStderrError = `stream timed out: no output produced after ${Math.round(INACTIVITY_TIMEOUT_MS / 1000)}s`;
+        lastStderrError = `stream timed out: no output produced after ${Math.round(inactivityTimeoutMs / 1000)}s`;
         if (getProxyToggle() === 'yes') {
           try {
             exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
@@ -1020,16 +1030,19 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
 
     const stdoutDecoder = new StringDecoder('utf8');
     antigravityProcess.stdout?.on('data', (chunk: Buffer) => {
+      if (isSettled) return;
       lastActivityTime = Date.now();
       stdoutLineBuffer += stdoutDecoder.write(chunk);
       const lines = stdoutLineBuffer.split(/\r?\n/);
       stdoutLineBuffer = lines.pop() || '';
       for (const line of lines) {
+        if (isSettled) break;
         processOutputLine(line.trim());
       }
     });
 
     antigravityProcess.stderr?.on('data', (chunk: Buffer) => {
+      if (isSettled) return;
       lastActivityTime = Date.now();
       const text = chunk.toString();
       console.error('[Antigravity CLI stderr]:', text);
@@ -1071,14 +1084,16 @@ function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptR
         watchdogTimer = null;
       }
       if (isSettled) return;
-      isSettled = true;
-      abortSignal.removeEventListener('abort', onAbort);
 
       stdoutLineBuffer += stdoutDecoder.end();
       if (stdoutLineBuffer.trim()) {
-        processOutputLine(stdoutLineBuffer.trim());
+        processOutputLine(stdoutLineBuffer.trim(), true);
         stdoutLineBuffer = '';
       }
+
+      if (isSettled) return;
+      isSettled = true;
+      abortSignal.removeEventListener('abort', onAbort);
 
       if (quotaErrorDetails) {
         reject(new QuotaExhaustedError(quotaErrorDetails.message, quotaErrorDetails.resetMsg, quotaErrorDetails.rawText));
@@ -1130,6 +1145,7 @@ export async function spawnAntigravity(
     files,
     permissionMode,
     skipPermissions,
+    toolsSettings,
   } = options;
 
   const providerSessionId = context.resolveProviderSessionId(sessionId);
@@ -1241,6 +1257,17 @@ export async function spawnAntigravity(
   }
 
   let currentPrompt = command;
+  const permissionGate = createAntigravityPermissionGate({
+    permissionMode,
+    skipPermissions,
+    workingDir,
+    sessionId,
+    getActiveSessionId: () => capturedSessionId || sessionId || processKey,
+    sessionSummary,
+    writer: ws,
+    abortSignal: abortController.signal,
+    toolsSettings: toolsSettings as { allowedTools?: string[]; disallowedTools?: string[] } | undefined,
+  });
 
   try {
     for (let attempt = 1; attempt <= TOTAL_MAX_ATTEMPTS; attempt++) {
@@ -1256,6 +1283,7 @@ export async function spawnAntigravity(
           effort,
           permissionMode,
           skipPermissions,
+          hookAddDir: permissionGate?.hookAddDir,
           images,
           files,
           capturedSessionId,
@@ -1467,6 +1495,7 @@ export async function spawnAntigravity(
             effort,
             permissionMode,
             skipPermissions,
+            hookAddDir: permissionGate?.hookAddDir,
             images,
             files,
             capturedSessionId,
@@ -1629,6 +1658,7 @@ export async function spawnAntigravity(
     cleanupProcessTracking();
     throw err;
   } finally {
+    permissionGate?.dispose();
     notifyTurnEnded();
   }
 }
@@ -1639,5 +1669,9 @@ export const antigravityRuntime: IProviderRuntime = {
   },
   abort(sessionId: string): boolean {
     return abortAntigravityProcessesByKey(sessionId);
+  },
+  permissions: {
+    resolve: resolveAntigravityToolApproval,
+    listPending: getAntigravityPendingApprovals,
   },
 };

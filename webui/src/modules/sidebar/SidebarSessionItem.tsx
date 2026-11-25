@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { Check, Edit2, Loader2, MoreHorizontal, Trash2, X } from 'lucide-react';
+import { Check, Edit2, GitBranch, Loader2, MoreHorizontal, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { Badge, Dialog, DialogContent, DialogTitle, LLMProviderLogo, Tooltip, buttonVariants } from '@/shared/ui';
@@ -127,30 +127,40 @@ function SidebarSessionItem({
       <div>
         <div
           className={cn(
-            'p-2 mx-3 my-0.5 rounded-md bg-card border active:scale-[0.98] transition-all duration-150 relative',
-            isSelected ? 'bg-primary/5 border-primary/20' : '',
-            !isSelected && isProcessing
-              ? 'border-border/60 bg-muted/20'
-              : !isSelected && sessionView.isActive
-              ? 'border-green-500/30 bg-green-50/5 dark:bg-green-900/5'
-              : 'border-border/30',
+            'relative mx-2 my-0.5 rounded-xl border p-2.5 transition-all duration-150 active:scale-[0.985]',
+            isSelected
+              ? 'border-primary/30 bg-primary/[0.08] shadow-xs'
+              : !isSelected && isProcessing
+                ? 'border-border/60 bg-muted/25'
+                : !isSelected && sessionView.isActive
+                  ? 'border-emerald-500/30 bg-emerald-500/[0.04]'
+                  : 'border-slate-200/70 bg-card/85 dark:border-white/[0.07]',
           )}
           onClick={selectMobileSession}
         >
-          <div className="flex items-center gap-2">
+          {isSelected && (
+            <span
+              aria-hidden
+              className="absolute left-1 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-primary"
+            />
+          )}
+          <div className={cn('flex items-center gap-2.5', isSelected && 'pl-1.5')}>
             <div
               className={cn(
-                'w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0',
-                isSelected ? 'bg-primary/10' : 'bg-muted/50',
+                'flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg',
+                isSelected ? 'bg-primary/15' : 'bg-muted/60',
               )}
             >
-              <LLMProviderLogo provider={session.__provider} className="h-3 w-3" />
+              <LLMProviderLogo provider={session.__provider} className="h-3.5 w-3.5" />
             </div>
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <div
-                  className="min-w-0 flex-1 truncate text-sm font-normal text-foreground"
+                  className={cn(
+                    'min-w-0 flex-1 truncate text-sm text-foreground',
+                    isSelected ? 'font-medium' : 'font-normal',
+                  )}
                   title={sessionView.sessionName}
                 >
                   {sessionView.sessionName}
@@ -158,22 +168,22 @@ function SidebarSessionItem({
                 {isProcessing ? (
                   <span className="ml-auto flex-shrink-0">
                     <Tooltip content={t('tooltips.processingSessionIndicator', 'Processing session')} position="top">
-                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
+                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-primary">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       </span>
                     </Tooltip>
                   </span>
                 ) : compactSessionAge && (
-                  <span className="ml-auto flex-shrink-0 text-[11px] text-muted-foreground">{compactSessionAge}</span>
+                  <span className="ml-auto flex-shrink-0 text-[11px] tabular-nums text-muted-foreground">{compactSessionAge}</span>
                 )}
               </div>
-              <div className="mt-0.5 flex items-center">
-                {sessionView.messageCount > 0 && (
-                  <Badge variant="secondary" className="px-1 py-0 text-xs">
+              {sessionView.messageCount > 0 && (
+                <div className="mt-0.5 flex items-center">
+                  <Badge variant="secondary" className="rounded-md px-1.5 py-0 text-[10px]">
                     {sessionView.messageCount}
                   </Badge>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
             <button
@@ -181,7 +191,7 @@ function SidebarSessionItem({
               aria-label={`Session options for ${sessionView.sessionName}`}
               aria-haspopup="dialog"
               aria-expanded={isMobileOptionsOpen}
-              className="ml-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted active:scale-95"
+              className="ml-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted active:scale-95"
               onClick={(event) => {
                 event.stopPropagation();
                 setMobileOptionsOpen(true);
@@ -196,7 +206,7 @@ function SidebarSessionItem({
           <DialogContent
             aria-describedby="mobile-session-options-description"
             animationClassName="animate-bottom-sheet-content-show motion-reduce:animate-none"
-            className="bottom-0 left-0 top-auto max-w-none translate-x-0 translate-y-0 rounded-b-none rounded-t-2xl border-x-0 border-b-0 px-4 pb-safe-area-inset-bottom pt-3"
+            className="bottom-0 left-0 top-auto max-w-none translate-x-0 translate-y-0 rounded-b-none rounded-t-3xl border-x-0 border-b-0 bg-card/95 px-4 pb-safe-area-inset-bottom pt-3 backdrop-blur-2xl"
           >
             <DialogTitle>{t('sessions.optionsTitle', '会话选项')}</DialogTitle>
             <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-muted-foreground/30" aria-hidden="true" />
@@ -293,6 +303,20 @@ function SidebarSessionItem({
                   </span>
                 </button>
 
+                {onForkSession && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileOptionsOpen(false);
+                      onForkSession(session);
+                    }}
+                    className="flex min-h-12 w-full items-center gap-3 rounded-xl border border-border bg-muted/35 px-4 py-3 text-left text-foreground transition-colors active:bg-muted"
+                  >
+                    <GitBranch className="h-5 w-5 flex-shrink-0" />
+                    <span className="text-sm font-medium">{t('sessions.forkSession', '分支新会话')}</span>
+                  </button>
+                )}
+
                 {!isProcessing && (
                   <button
                     type="button"
@@ -329,13 +353,14 @@ function SidebarSessionItem({
           href={`/session/${session.id}`}
           className={cn(
             buttonVariants({ variant: 'ghost' }),
-            'h-auto w-full justify-start rounded-md border bg-card p-2 pr-11 text-left font-normal transition-all duration-150',
-            isSelected ? 'border-primary/20 bg-primary/5' : 'border-border/30',
-            !isSelected && isProcessing
-              ? 'border-border/60 bg-muted/20 hover:bg-muted/25'
-              : !isSelected && sessionView.isActive
-                ? 'border-green-500/30 bg-green-50/5 hover:bg-green-50/10 dark:bg-green-900/5 dark:hover:bg-green-900/10'
-                : 'hover:bg-accent/50',
+            'relative h-auto w-full justify-start rounded-xl border bg-card/85 p-2.5 pr-11 text-left font-normal transition-all duration-150',
+            isSelected
+              ? 'border-primary/25 bg-primary/[0.08] font-medium shadow-xs'
+              : !isSelected && isProcessing
+                ? 'border-border/60 bg-muted/25 hover:bg-muted/35'
+                : !isSelected && sessionView.isActive
+                  ? 'border-emerald-500/30 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]'
+                  : 'border-border/40 hover:bg-card',
           )}
           // Left-click keeps in-app navigation; Ctrl/Cmd/middle-click and the
           // native right-click menu use the href to open a new tab/window.
@@ -345,7 +370,13 @@ function SidebarSessionItem({
             onSessionSelect(session, project.projectId);
           }}
         >
-          <div className="flex w-full min-w-0 items-center gap-2">
+          {isSelected && (
+            <span
+              aria-hidden
+              className="absolute left-1 top-1/2 h-4 w-1 -translate-y-1/2 rounded-full bg-primary"
+            />
+          )}
+          <div className={cn('flex w-full min-w-0 items-center gap-2', isSelected && 'pl-1')}>
             <div
               className={cn(
                 'flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md',

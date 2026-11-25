@@ -156,15 +156,21 @@ export default function SidebarRecentConversations({
                 onClick={handleClick}
                 data-testid="recent-conversation-row"
                 className={cn(
-                  'flex min-w-0 items-center gap-2 rounded-lg px-2 py-2 pr-11 text-left transition-colors',
+                  'relative flex min-w-0 items-center gap-2.5 rounded-xl border px-2.5 py-2.5 pr-11 text-left transition-all',
                   isSelected
-                    ? 'bg-primary/10 text-foreground'
-                    : 'text-foreground hover:bg-accent/60',
+                    ? 'border-primary/25 bg-primary/[0.08] font-medium text-foreground shadow-xs'
+                    : 'border-transparent text-foreground hover:border-border/50 hover:bg-card/85',
                 )}
               >
+                {isSelected && (
+                  <span
+                    aria-hidden
+                    className="absolute left-1 top-1/2 h-4 w-1 -translate-y-1/2 rounded-full bg-primary"
+                  />
+                )}
                 <span className={cn(
-                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md',
-                  isSelected ? 'bg-primary/10' : 'bg-muted/60',
+                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg',
+                  isSelected ? 'ml-1 bg-primary/15' : 'bg-muted/65',
                 )}>
                   <LLMProviderLogo provider={conversation.provider} className="h-3.5 w-3.5" />
                 </span>

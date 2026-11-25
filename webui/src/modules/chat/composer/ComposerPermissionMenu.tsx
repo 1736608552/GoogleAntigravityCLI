@@ -112,7 +112,7 @@ function ComposerPermissionMenu({
           updateAnchor();
           setIsOpen((current) => !current);
         }}
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors ${activeAppearance.trigger}`}
+        className={`flex h-9 w-9 shrink-0 touch-manipulation items-center justify-center rounded-2xl border transition-all active:scale-95 ${activeAppearance.trigger}`}
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label={heading}
@@ -122,26 +122,28 @@ function ComposerPermissionMenu({
       </button>
 
       {isOpen && anchor && createPortal(
-        <ComposerMenuSurface anchor={anchor} menuRef={menuRef} ariaLabel={heading}>
+        <ComposerMenuSurface anchor={anchor} menuRef={menuRef} ariaLabel={heading} onClose={close}>
           <ComposerMenuHeading>{heading}</ComposerMenuHeading>
-          {permissionModes.map((mode) => {
-            const appearance = getAppearance(mode);
-            const ModeIcon = appearance.icon;
-            return (
-              <ComposerMenuItem
-                key={mode}
-                icon={<ModeIcon className="h-4 w-4" />}
-                label={t(`codex.modes.${mode}`, { defaultValue: mode })}
-                description={t(`codex.descriptions.${mode}`, { defaultValue: '' }) || undefined}
-                isSelected={mode === permissionMode}
-                onSelect={() => {
-                  onSelectPermissionMode(mode);
-                  setIsOpen(false);
-                }}
-                className={appearance.item}
-              />
-            );
-          })}
+          <div className="space-y-1">
+            {permissionModes.map((mode) => {
+              const appearance = getAppearance(mode);
+              const ModeIcon = appearance.icon;
+              return (
+                <ComposerMenuItem
+                  key={mode}
+                  icon={<ModeIcon className="h-4 w-4" />}
+                  label={t(`codex.modes.${mode}`, { defaultValue: mode })}
+                  description={t(`codex.descriptions.${mode}`, { defaultValue: '' }) || undefined}
+                  isSelected={mode === permissionMode}
+                  onSelect={() => {
+                    onSelectPermissionMode(mode);
+                    setIsOpen(false);
+                  }}
+                  className={appearance.item}
+                />
+              );
+            })}
+          </div>
         </ComposerMenuSurface>,
         document.body,
       )}

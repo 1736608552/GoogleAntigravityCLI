@@ -76,7 +76,7 @@ export default function ChatExportMenu({
       iconOnly
       label={t('export.trigger')}
       ariaLabel={t('export.trigger')}
-      triggerClassName="h-8 w-8 rounded-lg border border-border/50 text-muted-foreground hover:bg-accent hover:text-foreground"
+      triggerClassName="h-8 w-8 rounded-xl border border-slate-200/75 bg-card/85 text-muted-foreground shadow-xs backdrop-blur-sm hover:bg-card hover:text-foreground dark:border-white/[0.08]"
       menuClassName="w-[260px] rounded-xl p-1.5 shadow-xl"
       header={(
         <div className="mb-1 border-b border-border px-3 py-2">

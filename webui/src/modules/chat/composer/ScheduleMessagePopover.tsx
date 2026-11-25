@@ -75,8 +75,8 @@ export function ScheduleMessagePopover({ disabled, onSchedule }: ScheduleMessage
         aria-label={ariaLabel}
         title={ariaLabel}
         className={cn(
-          'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground transition-colors',
-          disabled ? 'cursor-not-allowed opacity-40' : 'hover:bg-muted hover:text-foreground',
+          'hidden h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-slate-200/80 bg-muted/50 text-muted-foreground transition-all sm:flex dark:border-white/[0.08]',
+          disabled ? 'cursor-not-allowed opacity-40' : 'hover:bg-muted hover:text-foreground active:scale-95',
           isOpen && 'text-foreground',
         )}
       >
@@ -84,7 +84,7 @@ export function ScheduleMessagePopover({ disabled, onSchedule }: ScheduleMessage
       </button>
 
       {isOpen && anchor && createPortal(
-        <ComposerMenuSurface anchor={anchor} menuRef={menuRef} ariaLabel={ariaLabel}>
+        <ComposerMenuSurface anchor={anchor} menuRef={menuRef} ariaLabel={ariaLabel} onClose={close}>
           <ComposerMenuHeading>{t('schedule.heading')}</ComposerMenuHeading>
           {QUICK_OFFSETS_MINUTES.map((minutes) => (
             <ComposerMenuItem

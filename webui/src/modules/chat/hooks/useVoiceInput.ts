@@ -24,10 +24,29 @@ function pickMime(): string {
 }
 
 
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal?: boolean }> }) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+function getSpeechRecognitionConstructor(): (new () => SpeechRecognitionLike) | null {
+  if (typeof window === 'undefined') return null;
+  const win = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+  };
+  return win.SpeechRecognition || win.webkitSpeechRecognition || null;
+}
+
 /**
- * Push-to-talk dictation. Records the mic, uploads to /api/voice/transcribe
- * (an OpenAI-compatible speech-to-text backend via the Express proxy), and
- * returns the transcript through onTranscript.
+ * Push-to-talk dictation. Supports browser-native SpeechRecognition (zero-config)
+ * as well as MediaRecorder -> /api/voice/transcribe.
  */
 export function useVoiceInput(
   onTranscript: (text: string, send?: boolean) => void,
@@ -35,6 +54,8 @@ export function useVoiceInput(
 ) {
   const [state, setState] = useState<VoiceInputState>('idle');
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const speechRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechBufferRef = useRef('');
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const cancelledRef = useRef(false);
@@ -90,22 +111,22 @@ export function useVoiceInput(
         const blob = new Blob(chunksRef.current, { type });
         if (blob.size < 800) {
           setState('idle');
-          onError?.('Recording too short');
+          onError?.('录音时间太短');
           return;
         }
         setState('transcribing');
         try {
           const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
           const res = await transcribeVoice(blob, `recording.${ext}`);
-          if (!res.ok) throw new Error(`transcribe ${res.status}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const data = await res.json();
           if (cancelledRef.current) return;
           const text = String(data?.text || '').trim();
           if (text) onTranscript(text, shouldSend);
-          else onError?.('No speech detected');
+          else onError?.('未检测到语音内容');
         } catch (e) {
           if (!cancelledRef.current) {
-            onError?.(`Transcription failed: ${e instanceof Error ? e.message : String(e)}`);
+            onError?.(`语音转写失败: ${e instanceof Error ? e.message : String(e)}`);
           }
         } finally {
           if (!cancelledRef.current) setState('idle');
@@ -118,10 +139,63 @@ export function useVoiceInput(
       recorderRef.current = null;
       stopTracks();
       if (cancelledRef.current) return;
+
+      // 若 MediaRecorder 受限但浏览器支持原生 SpeechRecognition，自动降级为原生实时听写
+      const SpeechCtor = getSpeechRecognitionConstructor();
+      if (SpeechCtor) {
+        try {
+          const recognition = new SpeechCtor();
+          recognition.lang = typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'zh-CN';
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          speechBufferRef.current = '';
+          speechRef.current = recognition;
+
+          recognition.onresult = (event) => {
+            let finalStr = '';
+            for (let i = 0; i < event.results.length; i += 1) {
+              const item = event.results[i];
+              if (item && item[0]?.transcript) {
+                finalStr += item[0].transcript;
+              }
+            }
+            speechBufferRef.current = finalStr.trim();
+          };
+          recognition.onerror = (ev) => {
+            speechRef.current = null;
+            if (!cancelledRef.current) {
+              const code = ev?.error || '未知错误';
+              const friendly =
+                code === 'not-allowed' || code === 'service-not-allowed'
+                  ? '麦克风未授权（请检查系统权限或使用 HTTPS 访问）'
+                  : `语音识别异常: ${code}`;
+              onError?.(friendly);
+              setState('idle');
+            }
+          };
+          recognition.onend = () => {
+            speechRef.current = null;
+            if (cancelledRef.current) return;
+            const shouldSend = sendRef.current;
+            sendRef.current = false;
+            const text = speechBufferRef.current.trim();
+            speechBufferRef.current = '';
+            if (text) onTranscript(text, shouldSend);
+            setState('idle');
+          };
+
+          recognition.start();
+          setState('recording');
+          return;
+        } catch (_) {
+          speechRef.current = null;
+        }
+      }
+
       const err = e as { name?: string; message?: string };
-      let msg = `Mic error: ${err?.message || e}`;
-      if (err?.name === 'NotAllowedError') msg = 'Microphone access denied.';
-      else if (err?.name === 'NotFoundError') msg = 'No microphone found.';
+      let msg = `麦克风错误: ${err?.message || e}`;
+      if (err?.name === 'NotAllowedError') msg = '请先允许麦克风权限';
+      else if (err?.name === 'NotFoundError') msg = '未检测到麦克风设备';
       onError?.(msg);
       setState('idle');
     } finally {
@@ -137,6 +211,12 @@ export function useVoiceInput(
     if (rec && rec.state !== 'inactive') {
       sendRef.current = opts?.send ?? false;
       rec.stop();
+      return;
+    }
+    const speech = speechRef.current;
+    if (speech) {
+      sendRef.current = opts?.send ?? false;
+      speech.stop();
     }
   }, []);
 

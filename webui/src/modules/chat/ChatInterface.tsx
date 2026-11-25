@@ -213,6 +213,7 @@ function ChatInterface({
     queuedDraft,
     editQueuedDraft,
     deleteQueuedDraft,
+    sendQueuedDraftNow,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,
@@ -278,6 +279,29 @@ function ChatInterface({
     // 然后在后台异步同步已持久化的最新消息
     void requestLatestMessages(selectedSession.id, isActive);
   }, [isActive, requestLatestMessages, selectedProject, selectedSession, sendMessage]);
+
+  // 当会话正在处理中时，定期进行轻量级增量重订阅与尾部历史兜底同步，
+  // 防止移动端弱网或后台恢复后出现交互信息滞后、需要手动刷新才显示的问题
+  useEffect(() => {
+    if (!isProcessing || !selectedSession?.id || !isActive) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const sid = selectedSession.id;
+      statusCheckSentAtRef.current.set(sid, Date.now());
+      sendMessage({
+        type: 'chat.subscribe',
+        sessions: [{
+          sessionId: sid,
+          lastSeq: lastSeqRef.current.get(sid) ?? 0,
+        }],
+      });
+      void requestLatestMessages(sid, true);
+    }, 8_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isActive, isProcessing, requestLatestMessages, selectedSession?.id, sendMessage]);
 
   useChatRealtimeHandlers({
     isActive,
@@ -425,7 +449,7 @@ function ChatInterface({
 
   return (
     <PermissionContext.Provider value={permissionContextValue}>
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
         <ChatMessagesPane
           scrollContainerRef={scrollContainerRef}
           // Not redundant with the `scroll` listener. A first page is 20 rows,
@@ -480,17 +504,18 @@ function ChatInterface({
           onLoadFullTranscript={loadFullTranscript}
         />
 
-        <div className="relative flex-shrink-0">
+        <div className="relative z-20 shrink-0 bg-transparent">
           {isUserScrolledUp && chatMessages.length > 0 && (
-            <div className="pointer-events-none absolute -top-11 left-0 right-0 z-20 flex justify-center">
+            <div className="pointer-events-none absolute -top-16 left-0 right-0 z-30 flex justify-center">
               <button
                 type="button"
                 onClick={scrollToBottomAndReset}
                 aria-label={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
-                className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-border/50 bg-card text-muted-foreground shadow-sm transition-all duration-200 hover:bg-accent hover:text-foreground"
+                className="pointer-events-auto inline-flex h-8 touch-manipulation items-center gap-1.5 rounded-full border border-slate-200/85 bg-card/90 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur-xl transition-all duration-200 hover:bg-card active:scale-95 dark:border-white/10"
                 title={t('input.scrollToBottom', { defaultValue: 'Scroll to bottom' })}
               >
-                <ArrowDownIcon className="h-4 w-4" aria-hidden />
+                <ArrowDownIcon className="h-3.5 w-3.5 text-primary" aria-hidden />
+                <span>{t('input.scrollToBottom', { defaultValue: '回到底部' })}</span>
               </button>
             </div>
           )}
@@ -531,6 +556,7 @@ function ChatInterface({
           onResolveBackgroundSendPrompt={resolveBackgroundSendPrompt}
           onEditQueuedDraft={editQueuedDraft}
           onDeleteQueuedDraft={deleteQueuedDraft}
+          onSendQueuedDraftNow={sendQueuedDraftNow}
           attachedFiles={attachedFiles}
           onRemoveAttachment={(index) =>
             setAttachedFiles((previous) =>

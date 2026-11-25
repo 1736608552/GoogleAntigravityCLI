@@ -14,13 +14,14 @@ import {
   updateTranslateConfig,
   probeTranslateEngine,
   type ReasoningTranslateConfig,
-} from '../hooks/useReasoningTranslate';
+} from '@/modules/chat/hooks/useReasoningTranslate';
 
-interface Props {
+type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
+};
 
+/** Used by chat's ChatComposer to configure real-time thinking translation (Microsoft Bing by default). */
 export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) {
   const { t } = useTranslation('chat');
   const [loading, setLoading] = React.useState(true);
@@ -31,7 +32,7 @@ export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) 
   const [enabled, setEnabled] = React.useState(true);
   const [showOriginal, setShowOriginal] = React.useState(true);
   const [defaultOpenOriginal, setDefaultOpenOriginal] = React.useState(false);
-  const [engineType, setEngineType] = React.useState<'ollama' | 'openai-compatible' | 'antigravity'>('openai-compatible');
+  const [engineType, setEngineType] = React.useState<'bing' | 'ollama' | 'openai-compatible' | 'antigravity'>('bing');
 
   // OpenAI-Compatible (包括硅基流动) 配置
   const [apiBaseUrl, setApiBaseUrl] = React.useState('https://api.siliconflow.cn/v1');
@@ -52,7 +53,7 @@ export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) 
         setEnabled(c.enabled);
         setShowOriginal(c.showOriginal);
         setDefaultOpenOriginal(c.defaultOpenOriginal);
-        setEngineType(c.engine || 'openai-compatible');
+        setEngineType(c.engine || 'bing');
 
         const oai = c.engines?.['openai-compatible'] || {};
         if (oai.baseURL) setApiBaseUrl(oai.baseURL);
@@ -69,9 +70,11 @@ export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) 
       .finally(() => setLoading(false));
   }, [open]);
 
-  const handleApplyPreset = (preset: 'siliconflow-qwen' | 'siliconflow-qwen3' | 'ollama' | 'groq') => {
+  const handleApplyPreset = (preset: 'bing' | 'siliconflow-qwen' | 'siliconflow-qwen3' | 'ollama' | 'groq') => {
     setProbeResult(null);
-    if (preset === 'siliconflow-qwen') {
+    if (preset === 'bing') {
+      setEngineType('bing');
+    } else if (preset === 'siliconflow-qwen') {
       setEngineType('openai-compatible');
       setApiBaseUrl('https://api.siliconflow.cn/v1');
       setApiModel('Qwen/Qwen2.5-7B-Instruct');
@@ -94,9 +97,11 @@ export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) 
     setProbing(true);
     setProbeResult(null);
     try {
-      const activeConfig = engineType === 'ollama'
-        ? { baseURL: ollamaBaseUrl, model: ollamaModel }
-        : { baseURL: apiBaseUrl, model: apiModel, apiKey };
+      const activeConfig = engineType === 'bing'
+        ? { timeoutMs: 12000 }
+        : engineType === 'ollama'
+          ? { baseURL: ollamaBaseUrl, model: ollamaModel }
+          : { baseURL: apiBaseUrl, model: apiModel, apiKey };
 
       const res = await probeTranslateEngine({
         engine: engineType,
@@ -122,7 +127,9 @@ export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) 
         showOriginal,
         defaultOpenOriginal,
         engine: engineType,
+        migratedToBing: true,
         engines: {
+          bing: { timeoutMs: 12000 },
           ollama: { baseURL: ollamaBaseUrl, model: ollamaModel },
           'openai-compatible': { baseURL: apiBaseUrl, model: apiModel, apiKey, displayName: 'SiliconFlow/OpenAI' },
           antigravity: { baseURL: 'https://generativelanguage.googleapis.com/v1beta', model: 'gemini-2.5-flash' },
@@ -190,12 +197,21 @@ export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) 
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <Button
                   type="button"
+                  variant={engineType === 'bing' ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 text-xs gap-1"
+                  onClick={() => handleApplyPreset('bing')}
+                >
+                  <Sparkles className="h-3 w-3" />
+                  Microsoft Bing (免费免配置)
+                </Button>
+                <Button
+                  type="button"
                   variant="outline"
                   size="sm"
                   className="h-7 text-xs gap-1"
                   onClick={() => handleApplyPreset('siliconflow-qwen3')}
                 >
-                  <Sparkles className="h-3 w-3 text-amber-500" />
                   硅基流动 Qwen3-8B
                 </Button>
                 <Button
@@ -237,12 +253,17 @@ export default function ReasoningTranslateDialog({ open, onOpenChange }: Props) 
                   onChange={(e) => setEngineType(e.target.value as any)}
                   className="h-8 rounded-md border border-input bg-background px-2 text-xs"
                 >
+                  <option value="bing">Microsoft Bing 免费翻译 (推荐)</option>
                   <option value="openai-compatible">OpenAI 兼容 (硅基流动/Groq等)</option>
                   <option value="ollama">本地 Ollama (0成本离线)</option>
                 </select>
               </div>
 
-              {engineType === 'openai-compatible' ? (
+              {engineType === 'bing' ? (
+                <div className="rounded-md border border-primary/20 bg-primary/5 p-2.5 text-xs text-muted-foreground leading-relaxed">
+                  已启用 <span className="font-medium text-foreground">Microsoft Bing (Edge)</span> 实时翻译接口，无需本地大模型或 API Key，即开即用且不消耗任何模型额度。
+                </div>
+              ) : engineType === 'openai-compatible' ? (
                 <>
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground block">API 地址 (Base URL)</label>

@@ -1,18 +1,47 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 
 import { useDeviceSettings } from '@/shared/hooks/useDeviceSettings';
 import { useUiPreferences, useSetUiPreference } from '@/shared/context/UiPreferencesContext';
 import { useTheme } from '@/shared/context/ThemeContext';
 import { useQuickSettingsDrag } from '@/modules/quick-settings-panel/hooks/useQuickSettingsDrag';
+import { cn } from '@/shared/utils';
 import type { PreferenceToggleKey, QuickSettingsPreferences } from '@/shared/types';
 import QuickSettingsContent from '@/modules/quick-settings-panel/QuickSettingsContent';
 import QuickSettingsHandle from '@/modules/quick-settings-panel/QuickSettingsHandle';
 import QuickSettingsPanelHeader from '@/modules/quick-settings-panel/QuickSettingsPanelHeader';
 
-/** Exported as QuickSettingsPanel and rendered by the project-workspace module as its slide-out quick settings drawer. */
-function QuickSettingsPanelView() {
-  const [isOpen, setIsOpen] = useState(false);
+type QuickSettingsPanelProps = {
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  onOpenFullSettings?: () => void;
+  showEdgeHandle?: boolean;
+};
+
+/**
+ * Exported as QuickSettingsPanel and rendered by ProjectQuickSettingsRegion (via WorkspaceHeader
+ * trigger) as a modern floating control center drawer on desktop and bottom sheet on mobile.
+ */
+function QuickSettingsPanelView({
+  isOpen: controlledOpen,
+  onOpenChange,
+  onOpenFullSettings,
+  showEdgeHandle = true,
+}: QuickSettingsPanelProps) {
+  // Manages visibility when rendered standalone without controlled props from the workspace header.
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const isOpen = isControlled ? controlledOpen : uncontrolledOpen;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (!isControlled) {
+        setUncontrolledOpen(next);
+      }
+      onOpenChange?.(next);
+    },
+    [isControlled, onOpenChange],
+  );
+
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const { isDarkMode } = useTheme();
   const preferences = useUiPreferences();
@@ -23,6 +52,18 @@ function QuickSettingsPanelView() {
     startDrag,
     consumeSuppressedClick,
   } = useQuickSettingsDrag({ isMobile });
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, setOpen]);
 
   const quickSettingsPreferences = useMemo<QuickSettingsPreferences>(() => ({
     showRawParameters: preferences.showRawParameters,
@@ -51,40 +92,54 @@ function QuickSettingsPanelView() {
         return;
       }
 
-      setIsOpen((previous) => !previous);
+      setOpen(!isOpen);
     },
-    [consumeSuppressedClick],
+    [consumeSuppressedClick, isOpen, setOpen],
   );
 
   return (
     <>
-      <QuickSettingsHandle
-        isOpen={isOpen}
-        isDragging={isDragging}
-        style={handleStyle}
-        onClick={handleToggleFromHandle}
-        onMouseDown={startDrag}
-        onTouchStart={startDrag}
-      />
-
-      <div
-        className={`fixed right-0 top-0 z-[9999] h-full w-64 transform border-l border-border bg-background shadow-xl transition-transform duration-150 ease-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} ${isMobile ? 'h-screen' : ''}`}
-      >
-        <div className="flex h-full flex-col">
-          <QuickSettingsPanelHeader />
-          <QuickSettingsContent
-            isDarkMode={isDarkMode}
-            preferences={quickSettingsPreferences}
-            onPreferenceChange={handlePreferenceChange}
-          />
-        </div>
-      </div>
+      {showEdgeHandle && (
+        <QuickSettingsHandle
+          isOpen={isOpen}
+          isDragging={isDragging}
+          style={handleStyle}
+          onClick={handleToggleFromHandle}
+          onMouseDown={startDrag}
+          onTouchStart={startDrag}
+        />
+      )}
 
       {isOpen && (
-        <div
-          className="fixed inset-0 z-[9998] bg-background/80 backdrop-blur-sm transition-opacity duration-150 ease-out"
-          onClick={() => setIsOpen(false)}
-        />
+        <>
+          <div
+            className="backdrop-blur-xs fixed inset-0 z-[9050] bg-slate-900/25 transition-opacity duration-200 dark:bg-black/55"
+            onClick={() => setOpen(false)}
+          />
+
+          <div
+            role="dialog"
+            aria-modal="true"
+            className={cn(
+              'fixed z-[9100] flex flex-col overflow-hidden border border-slate-200/80 bg-card/95 text-card-foreground shadow-2xl backdrop-blur-2xl dark:border-white/[0.09] dark:bg-zinc-900/95',
+              isMobile
+                ? 'sheet-enter inset-x-2 bottom-2 max-h-[84vh] rounded-3xl'
+                : 'popover-enter bottom-3 right-3 top-3 w-80 rounded-2xl',
+            )}
+          >
+            <QuickSettingsPanelHeader
+              isMobile={isMobile}
+              onClose={() => setOpen(false)}
+            />
+            <QuickSettingsContent
+              isDarkMode={isDarkMode}
+              preferences={quickSettingsPreferences}
+              onPreferenceChange={handlePreferenceChange}
+              onOpenFullSettings={onOpenFullSettings}
+              isMobile={isMobile}
+            />
+          </div>
+        </>
       )}
     </>
   );

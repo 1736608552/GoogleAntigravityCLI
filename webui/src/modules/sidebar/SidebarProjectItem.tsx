@@ -147,27 +147,29 @@ function SidebarProjectItem({
 
   return (
     <div className={cn('md:space-y-1', isDeleting && 'opacity-50 pointer-events-none')}>
-      <div className="sticky top-0 z-10 md:group group">
+      <div className="md:group group sticky top-0 z-10">
         {isCompact && (
-        <div className="bg-background">
+        <div className="bg-background/85 backdrop-blur-md">
           <div
             className={cn(
-              'p-3 mx-3 my-1 rounded-lg bg-card border border-border/50 active:scale-[0.98] transition-all duration-150',
-              isSelected && 'bg-primary/5 border-primary/20',
-              isStarred &&
-                !isSelected &&
-                'bg-yellow-50/50 dark:bg-yellow-900/5 border-yellow-200/30 dark:border-yellow-800/30',
+              'mx-2.5 my-1 rounded-2xl border p-3 shadow-xs transition-all duration-150 active:scale-[0.985]',
+              isSelected
+                ? 'border-primary/30 bg-primary/[0.06] shadow-sm'
+                : isStarred
+                  ? 'border-amber-300/40 bg-amber-50/40 dark:border-amber-700/30 dark:bg-amber-900/10'
+                  : 'border-slate-200/75 bg-card/85 dark:border-white/[0.08]',
             )}
             onClick={toggleProject}
           >
             <div className="flex items-center justify-between">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <button
+                  type="button"
                   className={cn(
-                    'w-8 h-8 rounded-lg flex items-center justify-center active:scale-90 transition-all duration-150 border',
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-150 active:scale-90',
                     isStarred
-                      ? 'bg-yellow-500/10 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800'
-                      : 'bg-gray-500/10 dark:bg-gray-900/30 border-gray-200 dark:border-gray-800',
+                      ? 'border-amber-300/60 bg-amber-500/12 dark:border-amber-700/40 dark:bg-amber-900/25'
+                      : 'border-border/60 bg-muted/50',
                   )}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -177,10 +179,10 @@ function SidebarProjectItem({
                 >
                   <Star
                     className={cn(
-                      'w-4 h-4 transition-colors',
+                      'h-4 w-4 transition-colors',
                       isStarred
-                        ? 'text-yellow-600 dark:text-yellow-400 fill-current'
-                        : 'text-gray-600 dark:text-gray-400',
+                        ? 'fill-current text-amber-500 dark:text-amber-400'
+                        : 'text-muted-foreground',
                     )}
                   />
                 </button>
@@ -192,7 +194,7 @@ function SidebarProjectItem({
                       type="text"
                       value={renameDraft}
                       onChange={(event) => onRenameDraftChange(event.target.value)}
-                      className="w-full rounded-lg border-2 border-primary/40 bg-background px-3 py-2 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-primary focus:shadow-md focus:outline-none"
+                      className="w-full rounded-xl border-2 border-primary/40 bg-background px-3 py-2 text-sm text-foreground shadow-sm transition-all duration-200 focus:border-primary focus:shadow-md focus:outline-none"
                       placeholder={t('projects.projectNamePlaceholder')}
                       autoFocus
                       autoComplete="off"
@@ -209,13 +211,13 @@ function SidebarProjectItem({
                       style={{
                         fontSize: '16px',
                         WebkitAppearance: 'none',
-                        borderRadius: '8px',
+                        borderRadius: '12px',
                       }}
                     />
                   ) : (
                     <>
                       <div className="flex min-w-0 flex-1 items-center justify-between">
-                        <h3 className="truncate text-sm font-normal text-foreground">{project.displayName}</h3>
+                        <h3 className="truncate text-sm font-medium text-foreground">{project.displayName}</h3>
                         {tasksEnabled && (
                           <TaskIndicator
                             status={taskStatus}
@@ -224,61 +226,67 @@ function SidebarProjectItem({
                           />
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground">{sessionCountLabel}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{sessionCountLabel}</p>
                     </>
                   )}
                 </div>
               </div>
 
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5">
                 {isEditing ? (
                   <>
                     <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-500 shadow-sm transition-all duration-150 active:scale-90 active:shadow-none dark:bg-green-600"
+                      type="button"
+                      className="shadow-xs flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500 text-white transition-all duration-150 active:scale-90"
                       onClick={(event) => {
                         event.stopPropagation();
                         saveProjectName();
                       }}
                     >
-                      <Check className="h-4 w-4 text-white" />
+                      <Check className="h-4 w-4" />
                     </button>
                     <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-500 shadow-sm transition-all duration-150 active:scale-90 active:shadow-none dark:bg-gray-600"
+                      type="button"
+                      className="shadow-xs flex h-8 w-8 items-center justify-center rounded-xl bg-muted text-muted-foreground transition-all duration-150 active:scale-90"
                       onClick={(event) => {
                         event.stopPropagation();
                         onCancelEditingProject();
                       }}
                     >
-                      <X className="h-4 w-4 text-white" />
+                      <X className="h-4 w-4" />
                     </button>
                   </>
                 ) : (
                   <>
                     <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 bg-red-500/10 active:scale-90 dark:border-red-800 dark:bg-red-900/30"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onDeleteProject(project);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />
-                    </button>
-
-                    <button
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 active:scale-90 dark:border-primary/30 dark:bg-primary/20"
+                      type="button"
+                      className="flex h-8 w-8 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground active:scale-90"
                       onClick={(event) => {
                         event.stopPropagation();
                         onStartEditingProject(project);
                       }}
+                      title={t('tooltips.renameProject')}
                     >
-                      <Edit3 className="h-4 w-4 text-primary" />
+                      <Edit3 className="h-3.5 w-3.5" />
                     </button>
 
-                    <div className="flex h-6 w-6 items-center justify-center rounded-md bg-muted/30">
+                    <button
+                      type="button"
+                      className="flex h-8 w-8 items-center justify-center rounded-xl text-muted-foreground/80 transition-colors hover:bg-destructive/10 hover:text-destructive active:scale-90"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDeleteProject(project);
+                      }}
+                      title={t('tooltips.deleteProject')}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+
+                    <div className="flex h-7 w-6 items-center justify-center rounded-lg text-muted-foreground">
                       {isExpanded ? (
-                        <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                        <ChevronDown className="h-4 w-4" />
                       ) : (
-                        <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                        <ChevronRight className="h-4 w-4" />
                       )}
                     </div>
                   </>
@@ -293,15 +301,12 @@ function SidebarProjectItem({
         <Button
           variant="ghost"
           className={cn(
-            'sticky top-0 z-10 flex w-full justify-between p-2 h-auto font-normal hover:bg-accent/50',
+            'sticky top-0 z-10 flex h-auto w-full justify-between rounded-xl px-2.5 py-2 font-normal transition-all',
             isSelected
-              ? 'bg-accent text-accent-foreground'
+              ? 'bg-primary/[0.08] font-medium text-foreground shadow-xs ring-1 ring-primary/15 hover:bg-primary/[0.11]'
               : isStarred
-                ? 'bg-background hover:bg-accent/50'
-                : 'bg-background',
-            isStarred &&
-              !isSelected &&
-              'bg-yellow-50/50 dark:bg-yellow-900/10 hover:bg-yellow-100/50 dark:hover:bg-yellow-900/20',
+                ? 'bg-amber-50/45 hover:bg-amber-100/50 dark:bg-amber-900/10 dark:hover:bg-amber-900/20'
+                : 'bg-background/80 backdrop-blur-sm hover:bg-card/85',
           )}
           onClick={selectAndToggleProject}
         >

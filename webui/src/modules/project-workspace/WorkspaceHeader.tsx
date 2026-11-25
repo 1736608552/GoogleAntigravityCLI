@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, SlidersHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -17,9 +17,10 @@ type WorkspaceHeaderProps = {
   shouldShowBrowserTab: boolean;
   isMobile: boolean;
   onMenuClick: () => void;
+  onOpenQuickSettings: () => void;
 };
 
-/** Rendered by WorkspaceMain to show the workspace title alongside the scrollable tab bar. */
+/** Rendered by WorkspaceMain to show the workspace title, scrollable tabs, and quick-settings control center trigger. */
 export default function WorkspaceHeader({
   activeTab,
   setActiveTab,
@@ -29,6 +30,7 @@ export default function WorkspaceHeader({
   shouldShowBrowserTab,
   isMobile,
   onMenuClick,
+  onOpenQuickSettings,
 }: WorkspaceHeaderProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -92,9 +94,9 @@ export default function WorkspaceHeader({
   };
 
   return (
-    <header className="pwa-header-safe flex-shrink-0 border-b border-border/60 bg-background/95 px-3 py-1.5 backdrop-blur-sm sm:px-4 sm:py-2">
-      <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
-        <div className="flex min-w-0 items-center gap-2 sm:max-w-[min(34%,24rem)] sm:flex-[1_1_18rem]">
+    <header className="pwa-header-safe flex-shrink-0 border-b border-slate-200/70 bg-background/80 px-2.5 py-2 backdrop-blur-xl dark:border-white/[0.07] sm:px-4">
+      <div className="flex min-w-0 flex-row items-center justify-between gap-2 sm:gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:max-w-[min(36%,24rem)] sm:gap-2.5">
           {isMobile && <MobileMenuButton onMenuClick={onMenuClick} />}
           <WorkspaceTitle
             activeTab={activeTab}
@@ -104,17 +106,17 @@ export default function WorkspaceHeader({
           />
         </div>
 
-        <div className="-mx-3 min-w-0 sm:mx-0 sm:flex-1">
-          <div className="relative ml-auto w-fit max-w-full">
+        <div className="flex min-w-0 max-w-[66%] shrink-0 items-center gap-1.5 sm:max-w-none sm:flex-1 sm:justify-end sm:gap-2">
+          <div className="relative min-w-0 max-w-full">
             {canScrollLeft && (
-              <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-12 bg-gradient-to-r from-background via-background/90 to-transparent" />
+              <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-background via-background/90 to-transparent" />
             )}
             <div
               ref={scrollRef}
               onScroll={updateScrollState}
               className={cn(
-                'scrollbar-hide max-w-full scroll-smooth overflow-x-auto overscroll-x-contain px-3 [-webkit-overflow-scrolling:touch]',
-                hasOverflow ? 'sm:px-9' : 'sm:pl-3 sm:pr-0',
+                'scrollbar-hide max-w-full scroll-smooth overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]',
+                hasOverflow ? 'sm:px-9' : 'sm:pl-2 sm:pr-0',
               )}
             >
               <WorkspaceTabs
@@ -125,7 +127,7 @@ export default function WorkspaceHeader({
               />
             </div>
             {canScrollRight && (
-              <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-12 bg-gradient-to-l from-background via-background/90 to-transparent" />
+              <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-10 bg-gradient-to-l from-background via-background/90 to-transparent" />
             )}
 
             {canScrollLeft && (
@@ -133,7 +135,7 @@ export default function WorkspaceHeader({
                 type="button"
                 onClick={() => scrollTabs(-1)}
                 aria-label={t('navigation.scrollTabsLeft', { defaultValue: 'Scroll tabs left' })}
-                className="absolute left-1 top-1/2 z-20 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/60 sm:flex"
+                className="absolute left-1 top-1/2 z-20 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg border border-border/70 bg-background/95 text-muted-foreground shadow-sm outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/60 sm:flex"
               >
                 <ChevronLeft className="h-4 w-4" />
               </button>
@@ -143,12 +145,22 @@ export default function WorkspaceHeader({
                 type="button"
                 onClick={() => scrollTabs(1)}
                 aria-label={t('navigation.scrollTabsRight', { defaultValue: 'Scroll tabs right' })}
-                className="absolute right-1 top-1/2 z-20 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/60 sm:flex"
+                className="absolute right-1 top-1/2 z-20 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg border border-border/70 bg-background/95 text-muted-foreground shadow-sm outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary/60 sm:flex"
               >
                 <ChevronRight className="h-4 w-4" />
               </button>
             )}
           </div>
+
+          <button
+            type="button"
+            onClick={onOpenQuickSettings}
+            aria-label={t('settings:quickSettings.title', { defaultValue: 'Quick Settings' })}
+            title={t('settings:quickSettings.title', { defaultValue: 'Quick Settings' })}
+            className="shadow-xs flex h-8 w-8 shrink-0 touch-manipulation items-center justify-center rounded-xl border border-slate-200/75 bg-white/85 text-muted-foreground backdrop-blur-md transition-all hover:bg-white hover:text-foreground active:scale-95 dark:border-white/[0.08] dark:bg-zinc-900/80 sm:h-9 sm:w-9"
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </header>

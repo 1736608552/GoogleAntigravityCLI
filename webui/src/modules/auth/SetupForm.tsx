@@ -61,12 +61,17 @@ export default function SetupForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const updateField = useCallback((field: keyof SetupFormState, value: string) => {
+    setErrorMessage('');
     setFormState((previous) => ({ ...previous, [field]: value }));
   }, []);
+
+  const isPasswordMismatch =
+    Boolean(formState.confirmPassword) && formState.password !== formState.confirmPassword;
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
+      if (isSubmitting) return;
       setErrorMessage('');
 
       const validationError = validateSetupForm(formState, t);
@@ -76,13 +81,18 @@ export default function SetupForm() {
       }
 
       setIsSubmitting(true);
-      const result = await register(formState.username.trim(), formState.password);
-      if (!result.success) {
-        setErrorMessage(result.error);
+      try {
+        const result = await register(formState.username.trim(), formState.password);
+        if (!result.success) {
+          setErrorMessage(result.error || '创建账号失败，请稍后重试');
+        }
+      } catch (err) {
+        setErrorMessage(err instanceof Error ? err.message : '创建账号失败，请检查网络连接');
+      } finally {
+        setIsSubmitting(false);
       }
-      setIsSubmitting(false);
     },
-    [formState, register, t],
+    [formState, isSubmitting, register, t],
   );
 
   return (
@@ -129,6 +139,12 @@ export default function SetupForm() {
           autoComplete="new-password"
           icon={ShieldCheck}
         />
+
+        {isPasswordMismatch && (
+          <p className="text-xs font-medium text-destructive">
+            {t('register.errors.passwordMismatch')}
+          </p>
+        )}
 
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5" />

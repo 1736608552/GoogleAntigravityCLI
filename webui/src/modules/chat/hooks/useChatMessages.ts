@@ -71,6 +71,30 @@ function parseTaskNotification(content: string): ParsedTaskNotification | null {
   };
 }
 
+function resolveToolDurationMs(msg: NormalizedMessage, tr: ToolResultSource): number | undefined {
+  const metaDuration = (tr as Record<string, any> | null)?.durationMs
+    ?? (tr as Record<string, any> | null)?.toolUseResult?.durationMs
+    ?? (msg as Record<string, any>).durationMs;
+
+  if (typeof metaDuration === 'number' && Number.isFinite(metaDuration) && metaDuration > 0) {
+    return Math.round(metaDuration);
+  }
+
+  const endTimestamp = (tr as Record<string, any> | null)?.timestamp;
+  if (!endTimestamp || !msg.timestamp) {
+    return undefined;
+  }
+
+  const startMs = new Date(msg.timestamp).getTime();
+  const endMs = new Date(endTimestamp).getTime();
+  if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+    const diff = Math.round(endMs - startMs);
+    return diff < 3_600_000 ? diff : undefined;
+  }
+
+  return undefined;
+}
+
 /**
  * Convert NormalizedMessage[] from the session store into ChatMessage[]
  * that the existing UI components expect.
@@ -297,6 +321,7 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
           toolId: msg.toolId,
           toolResult,
           toolStatus: typeof msg.status === 'string' ? msg.status : undefined,
+          toolDurationMs: resolveToolDurationMs(msg, tr),
           isSubagentContainer,
           subagent: msg.subagent,
           subagentActivity,

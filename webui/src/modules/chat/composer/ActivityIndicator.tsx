@@ -93,10 +93,10 @@ export default function ActivityIndicator({ activity, onAbort, isInputFocused = 
     ? t('claudeStatus.elapsed.seconds', { count: seconds, defaultValue: `${seconds}秒` })
     : t('claudeStatus.elapsed.minutesSeconds', { minutes, seconds, defaultValue: `${minutes}分 ${seconds}秒` });
   const tabSurfaceClassName = [
-    'chat-activity-tab inline-flex h-8 items-center rounded-b-none rounded-t-lg border border-b-0 bg-card px-3 text-xs transition-all duration-200',
+    'chat-activity-tab inline-flex h-7 items-center rounded-full border bg-white/95 px-3 text-xs backdrop-blur-md transition-all duration-200 dark:bg-zinc-900/90',
     isInputFocused
-      ? 'border-primary/30 shadow-[0_-1px_2px_hsl(var(--foreground)/0.08),1px_0_2px_hsl(var(--foreground)/0.06),-1px_0_2px_hsl(var(--foreground)/0.06)]'
-      : 'border-border/50 shadow-[0_-1px_1px_hsl(var(--foreground)/0.04),1px_0_1px_hsl(var(--foreground)/0.03),-1px_0_1px_hsl(var(--foreground)/0.03)]',
+      ? 'border-primary/25 shadow-sm'
+      : 'border-black/[0.06] shadow-sm dark:border-white/[0.08]',
   ].join(' ');
 
   return (

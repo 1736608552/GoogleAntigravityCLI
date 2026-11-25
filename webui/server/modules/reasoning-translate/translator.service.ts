@@ -131,11 +131,13 @@ export class TranslationCache {
 
 export interface AppReasoningConfig {
   enabled: boolean;
-  engine: 'ollama' | 'openai-compatible' | 'antigravity';
+  engine: 'bing' | 'ollama' | 'openai-compatible' | 'antigravity';
   showOriginal: boolean;
   defaultOpenOriginal: boolean;
   minChars: number;
+  migratedToBing?: boolean;
   engines: {
+    bing?: EngineConfig;
     ollama: EngineConfig;
     'openai-compatible': EngineConfig;
     antigravity: EngineConfig;
@@ -146,11 +148,15 @@ export interface AppReasoningConfig {
 export function defaultReasoningConfig(): AppReasoningConfig {
   return {
     enabled: true,
-    engine: 'ollama',
+    engine: 'bing',
     showOriginal: true,
     defaultOpenOriginal: false,
     minChars: 30,
+    migratedToBing: true,
     engines: {
+      bing: {
+        timeoutMs: 12_000,
+      },
       ollama: {
         baseURL: 'http://127.0.0.1:11434',
         model: 'qwen2.5:1.5b',

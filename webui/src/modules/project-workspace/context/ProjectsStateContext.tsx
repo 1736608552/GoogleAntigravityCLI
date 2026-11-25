@@ -19,6 +19,7 @@ type ProjectMainState = Pick<
   | 'activeTab'
   | 'setActiveTab'
   | 'setSidebarOpen'
+  | 'setQuickSettingsOpen'
   | 'isLoadingProjects'
   | 'openSettings'
   | 'externalMessageUpdate'
@@ -26,6 +27,11 @@ type ProjectMainState = Pick<
   | 'registerOptimisticSession'
   | 'handleProjectSelect'
   | 'refreshProjectsSilently'
+>;
+
+type ProjectQuickSettingsState = Pick<
+  ProjectsState,
+  'quickSettingsOpen' | 'setQuickSettingsOpen' | 'openSettings'
 >;
 
 type ProjectCommandState = Pick<
@@ -56,6 +62,7 @@ const ProjectMainContext = createContext<ProjectMainState | null>(null);
 const ProjectCommandContext = createContext<ProjectCommandState | null>(null);
 const ProjectEffectsContext = createContext<ProjectEffectsState | null>(null);
 const ProjectActiveSessionContext = createContext<ProjectActiveSessionState | null>(null);
+const ProjectQuickSettingsContext = createContext<ProjectQuickSettingsState | null>(null);
 
 /** Rendered by ProjectWorkspaceRoute to own the workspace's project and session state and expose it through this module's context hooks. */
 export function ProjectsStateProvider({
@@ -90,6 +97,7 @@ export function ProjectsStateProvider({
       activeTab: state.activeTab,
       setActiveTab: state.setActiveTab,
       setSidebarOpen: state.setSidebarOpen,
+      setQuickSettingsOpen: state.setQuickSettingsOpen,
       isLoadingProjects: state.isLoadingProjects,
       openSettings: state.openSettings,
       externalMessageUpdate: state.externalMessageUpdate,
@@ -110,8 +118,18 @@ export function ProjectsStateProvider({
       state.selectedProject,
       state.selectedSession,
       state.setActiveTab,
+      state.setQuickSettingsOpen,
       state.setSidebarOpen,
     ],
+  );
+
+  const quickSettingsState = useMemo<ProjectQuickSettingsState>(
+    () => ({
+      quickSettingsOpen: state.quickSettingsOpen,
+      setQuickSettingsOpen: state.setQuickSettingsOpen,
+      openSettings: state.openSettings,
+    }),
+    [state.openSettings, state.quickSettingsOpen, state.setQuickSettingsOpen],
   );
 
   const commandState = useMemo<ProjectCommandState>(
@@ -150,7 +168,9 @@ export function ProjectsStateProvider({
         <ProjectMainContext.Provider value={mainState}>
           <ProjectSidebarContext.Provider value={sidebarState}>
             <ProjectActiveSessionContext.Provider value={activeSessionState}>
-              {children}
+              <ProjectQuickSettingsContext.Provider value={quickSettingsState}>
+                {children}
+              </ProjectQuickSettingsContext.Provider>
             </ProjectActiveSessionContext.Provider>
           </ProjectSidebarContext.Provider>
         </ProjectMainContext.Provider>
@@ -186,5 +206,13 @@ export function useProjectActiveSessionState(): ProjectActiveSessionState {
   return useRequiredProjectContext(
     useContext(ProjectActiveSessionContext),
     'useProjectActiveSessionState',
+  );
+}
+
+/** Exposes the quick-settings control center drawer visibility and full-settings launcher to ProjectQuickSettingsRegion. */
+export function useProjectQuickSettingsState(): ProjectQuickSettingsState {
+  return useRequiredProjectContext(
+    useContext(ProjectQuickSettingsContext),
+    'useProjectQuickSettingsState',
   );
 }

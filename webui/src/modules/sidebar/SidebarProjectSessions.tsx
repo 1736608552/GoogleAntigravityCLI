@@ -86,17 +86,18 @@ export default function SidebarProjectSessions({
   const hasSessions = sessions.length > 0;
 
   return (
-    <div className="ml-3 space-y-1 border-l border-border pl-3">
+    <div className="ml-3.5 space-y-1 border-l border-border/50 pl-2.5">
       {isCompact ? (
-        <div className="px-3 pb-1 pt-1">
+        <div className="px-2 pb-1 pt-1">
           <button
-            className="flex h-8 w-full items-center justify-center gap-2 rounded-md bg-primary text-xs font-medium text-primary-foreground transition-all duration-150 hover:bg-primary/90 active:scale-[0.98]"
+            type="button"
+            className="bg-primary/12 hover:bg-primary/18 flex h-9 w-full items-center justify-center gap-2 rounded-xl text-xs font-semibold text-primary transition-all duration-150 active:scale-[0.985]"
             onClick={() => {
               onProjectSelect(project);
               onNewSession(project);
             }}
           >
-            <Plus className="h-3 w-3" />
+            <Plus className="h-3.5 w-3.5" />
             {t('sessions.newSession')}
           </button>
         </div>
@@ -104,10 +105,10 @@ export default function SidebarProjectSessions({
         <Button
           variant="default"
           size="sm"
-          className="flex h-8 w-full justify-start gap-2 bg-primary text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          className="bg-primary/12 hover:bg-primary/18 flex h-8 w-full justify-start gap-2 rounded-xl text-xs font-semibold text-primary shadow-none transition-colors"
           onClick={() => onNewSession(project)}
         >
-          <Plus className="h-3 w-3" />
+          <Plus className="h-3.5 w-3.5" />
           {t('sessions.newSession')}
         </Button>
       )}

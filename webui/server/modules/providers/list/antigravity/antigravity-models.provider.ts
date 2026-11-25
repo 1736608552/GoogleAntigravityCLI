@@ -101,13 +101,13 @@ export function parseAntigravityModelsOutput(rawStdout: string): ProviderModelsD
   for (const item of rawItems) {
     const { id, label } = item;
     if (id.startsWith('gemini-')) {
-      const match = id.match(/^(.+)-(high|medium|low)$/i);
+      const match = id.match(/^(.+)-(xhigh|high|medium|low|max)$/i);
       if (match) {
         const baseId = match[1];
         const effortVal = match[2].toLowerCase();
-        // 剥离 label 中的 (High)/(Medium)/(Low) 标识作为基础模型 label
+        // 剥离 label 中的 (XHigh)/(High)/(Medium)/(Low)/(Max) 标识作为基础模型 label
         const cleanLabel =
-          label.replace(/\s*\((?:High|Medium|Low)\)\s*/i, '').trim() || 'Gemini 3.8 Flash';
+          label.replace(/\s*\((?:XHigh|High|Medium|Low|Max)\)\s*/i, '').trim() || baseId;
 
         if (!geminiBases.has(baseId)) {
           geminiBases.set(baseId, {
@@ -118,7 +118,7 @@ export function parseAntigravityModelsOutput(rawStdout: string): ProviderModelsD
         } else {
           geminiBases.get(baseId)!.efforts.add(effortVal);
         }
-        // 关键：带有 -high/-medium/-low 后缀的衍生变体跳过，绝不单独加入模型列表！
+        // 关键：带有 -xhigh/-high/-medium/-low/-max 后缀的衍生变体跳过，绝不单独加入模型列表！
         continue;
       } else {
         // 无后缀的 gemini 原生基础条目
@@ -141,7 +141,7 @@ export function parseAntigravityModelsOutput(rawStdout: string): ProviderModelsD
 
   // 2. 将聚合后的 Gemini 基础模型加入列表（排在最前面）
   for (const [baseId, baseInfo] of geminiBases.entries()) {
-    const effortValues = ['low', 'medium', 'high'].filter((e) => baseInfo.efforts.has(e));
+    const effortValues = ['low', 'medium', 'high', 'xhigh', 'max'].filter((e) => baseInfo.efforts.has(e));
     options.push({
       value: baseId,
       label: baseInfo.baseLabel,

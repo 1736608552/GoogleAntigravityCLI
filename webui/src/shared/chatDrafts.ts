@@ -52,6 +52,8 @@ const listeners = new Set<() => void>();
 
 let drafts = new Map<string, DraftRecord>();
 const pendingScopes = new Set<string>();
+const inFlightScopeTokens = new Map<string, number>();
+const inFlightWritePromises = new Set<Promise<unknown>>();
 let serverWriteTimer: ReturnType<typeof setTimeout> | null = null;
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
@@ -117,25 +119,48 @@ function flushServerWrites(): void {
 
   for (const scope of scopes) {
     const draft = drafts.get(scope);
+    const writeToken = (inFlightScopeTokens.get(scope) ?? 0) + 1;
+    inFlightScopeTokens.set(scope, writeToken);
+
+    const finalize = () => {
+      if (inFlightScopeTokens.get(scope) === writeToken) {
+        inFlightScopeTokens.delete(scope);
+      }
+    };
 
     // A save that fails must never surface as an unhandled rejection out of a
     // timer callback: the mirror already holds the draft, and the next
     // keystroke re-sends it.
     try {
       if (!draft || isEmptyDraft(draft)) {
-        void api.user.deleteDraft(scope).catch((error: unknown) => {
-          console.error('Failed to delete chat draft:', error);
-        });
+        const p = api.user
+          .deleteDraft(scope)
+          .catch((error: unknown) => {
+            console.error('Failed to delete chat draft:', error);
+          })
+          .finally(() => {
+            finalize();
+            inFlightWritePromises.delete(p);
+          });
+        inFlightWritePromises.add(p);
         continue;
       }
 
-      void api.user.saveDraft(scope, {
-        text: draft.text,
-        queuedMessage: draft.queuedMessage,
-      }).catch((error: unknown) => {
-        console.error('Failed to save chat draft:', error);
-      });
+      const p = api.user
+        .saveDraft(scope, {
+          text: draft.text,
+          queuedMessage: draft.queuedMessage,
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to save chat draft:', error);
+        })
+        .finally(() => {
+          finalize();
+          inFlightWritePromises.delete(p);
+        });
+      inFlightWritePromises.add(p);
     } catch (error) {
+      finalize();
       console.error('Failed to save chat draft:', error);
     }
   }
@@ -235,6 +260,10 @@ export function subscribeToChatDrafts(listener: () => void): () => void {
  * staler server copy would delete what they are in the middle of writing.
  */
 export async function hydrateChatDrafts(): Promise<void> {
+  if (inFlightWritePromises.size > 0) {
+    await Promise.allSettled([...inFlightWritePromises]);
+  }
+
   let serverDrafts: Array<{ scope?: unknown; text?: unknown; queuedMessage?: unknown }> = [];
 
   try {
@@ -254,10 +283,15 @@ export async function hydrateChatDrafts(): Promise<void> {
     return;
   }
 
+  const protectedScopes = new Set<string>([
+    ...pendingScopes,
+    ...inFlightScopeTokens.keys(),
+  ]);
+
   const merged = new Map<string, DraftRecord>();
   for (const draft of serverDrafts) {
     const scope = typeof draft.scope === 'string' ? draft.scope : '';
-    if (!scope || pendingScopes.has(scope)) {
+    if (!scope || protectedScopes.has(scope)) {
       continue;
     }
 
@@ -269,10 +303,10 @@ export async function hydrateChatDrafts(): Promise<void> {
     });
   }
 
-  // Local edits whose debounced write has not left the browser yet win over
-  // the server snapshot. Every other missing scope was deleted remotely and
-  // must also disappear from the mirror.
-  for (const scope of pendingScopes) {
+  // Local edits whose debounced or in-flight write has not settled yet win
+  // over the server snapshot. Every other missing scope was deleted remotely
+  // and must also disappear from the mirror.
+  for (const scope of protectedScopes) {
     const pending = drafts.get(scope);
     if (pending) {
       merged.set(scope, pending);
@@ -288,6 +322,8 @@ export async function hydrateChatDrafts(): Promise<void> {
 export function resetChatDrafts(): void {
   drafts = new Map();
   pendingScopes.clear();
+  inFlightScopeTokens.clear();
+  inFlightWritePromises.clear();
   if (serverWriteTimer !== null) {
     clearTimeout(serverWriteTimer);
     serverWriteTimer = null;

@@ -17,6 +17,7 @@ function ProjectMainRegion({
     activeTab,
     setActiveTab,
     setSidebarOpen,
+    setQuickSettingsOpen,
     isLoadingProjects,
     openSettings,
     externalMessageUpdate,
@@ -29,6 +30,10 @@ function ProjectMainRegion({
   const handleOpenSidebar = useCallback(() => {
     setSidebarOpen(true);
   }, [setSidebarOpen]);
+
+  const handleOpenQuickSettings = useCallback(() => {
+    setQuickSettingsOpen(true);
+  }, [setQuickSettingsOpen]);
 
   const handleNavigateToSession = useCallback((
     targetSessionId: string,
@@ -58,6 +63,7 @@ function ProjectMainRegion({
       sendMessage={sendMessage}
       isMobile={isMobile}
       onMenuClick={handleOpenSidebar}
+      onOpenQuickSettings={handleOpenQuickSettings}
       isLoading={isLoadingProjects}
       onNavigateToSession={handleNavigateToSession}
       onSessionEstablished={handleSessionEstablished}

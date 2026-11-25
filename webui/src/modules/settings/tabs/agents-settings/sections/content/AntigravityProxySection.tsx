@@ -865,7 +865,21 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
             </span>
             <span>·</span>
             <span>
-              当前出口: <b className="text-foreground font-mono">{proxyStatus?.activeCountry || country || 'United States'}</b>
+              当前出口:{' '}
+              <b className="text-foreground font-mono">
+                {(() => {
+                  const target = proxyStatus?.activeCountry || country || 'United States';
+                  const loc = locations.find(
+                    (l) => l.name.toLowerCase() === target.toLowerCase() || l.code.toLowerCase() === target.toLowerCase()
+                  );
+                  return loc ? `${loc.flag} ${loc.zh} (${loc.name})` : target;
+                })()}
+              </b>
+              {!proxyStatus?.socksListening && (
+                <span className="ml-1 text-[10.5px] text-muted-foreground font-normal">
+                  (已配置生效，发起对话时自动连通)
+                </span>
+              )}
             </span>
             {proxyStatus?.activeProviderCount != null && (
               <>

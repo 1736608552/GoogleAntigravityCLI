@@ -140,6 +140,18 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
     });
   };
 
+  useEffect(() => {
+    if (!isOpen || showLoginModal) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose, showLoginModal]);
+
   if (!isOpen) {
     return null;
   }
@@ -147,22 +159,34 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
   const isAuthenticated = Boolean(loginProvider && providerAuthStatus[loginProvider].authenticated);
 
   return (
-    <div className="modal-backdrop fixed inset-0 z-[9999] flex items-center justify-center bg-background/80 backdrop-blur-sm md:p-4">
-      <div className="flex h-full w-full flex-col overflow-hidden border border-border bg-background shadow-2xl md:h-[90vh] md:max-w-4xl md:rounded-xl">
+    <div
+      className="modal-backdrop fixed inset-0 z-[9000] flex items-center justify-center bg-slate-900/25 backdrop-blur-md dark:bg-black/55 md:p-5"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="popover-enter flex h-full w-full flex-col overflow-hidden border border-slate-200/80 bg-background/95 shadow-2xl backdrop-blur-2xl dark:border-white/[0.09] md:h-[88vh] md:max-w-5xl md:rounded-2xl">
         {/* Header */}
-        <div className="flex flex-shrink-0 items-center justify-between border-b border-border px-4 py-3 md:px-5">
-          <h2 className="text-base font-semibold text-foreground">{t('title')}</h2>
+        <div className="pwa-header-safe flex flex-shrink-0 items-center justify-between border-b border-border/60 bg-background/80 px-4 py-3 backdrop-blur-md md:px-6">
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-base font-semibold tracking-tight text-foreground md:text-lg">{t('title')}</h2>
+          </div>
           <div className="flex items-center gap-2">
             {saveStatus === 'success' && (
-              <span className="animate-in fade-in text-xs text-muted-foreground">{t('saveStatus.success')}</span>
+              <span className="animate-in fade-in bg-emerald-500/12 rounded-full px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                {t('saveStatus.success')}
+              </span>
             )}
             <Button
               variant="ghost"
               size="sm"
               onClick={onClose}
-              className="h-10 w-10 touch-manipulation p-0 text-muted-foreground hover:text-foreground active:bg-accent/50"
+              aria-label={t('common:actions.close', { defaultValue: 'Close' })}
+              className="h-9 w-9 touch-manipulation rounded-xl bg-muted/60 p-0 text-muted-foreground transition-all hover:bg-muted hover:text-foreground active:scale-95"
             >
-              <X className="h-5 w-5" />
+              <X className="h-4 w-4" />
             </Button>
           </div>
         </div>

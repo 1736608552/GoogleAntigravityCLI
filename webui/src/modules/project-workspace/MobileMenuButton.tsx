@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+
 import { useMobileMenuHandlers } from '@/modules/project-workspace/hooks/useMobileMenuHandlers';
 
 type MobileMenuButtonProps = {
@@ -12,8 +13,8 @@ export default function MobileMenuButton({ onMenuClick, compact = false }: Mobil
   const { handleMobileMenuClick, handleMobileMenuTouchEnd } = useMobileMenuHandlers(onMenuClick);
 
   const buttonClasses = compact
-    ? 'p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-accent/60 pwa-menu-button'
-    : 'p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-accent/60 touch-manipulation active:scale-95 pwa-menu-button flex-shrink-0';
+    ? 'flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200/75 bg-white/80 text-muted-foreground shadow-xs transition-all hover:bg-white hover:text-foreground active:scale-95 dark:border-white/[0.08] dark:bg-zinc-900/75 pwa-menu-button'
+    : 'flex h-9 w-9 flex-shrink-0 touch-manipulation items-center justify-center rounded-xl border border-slate-200/75 bg-white/85 text-muted-foreground shadow-xs backdrop-blur-md transition-all hover:bg-white hover:text-foreground active:scale-95 dark:border-white/[0.08] dark:bg-zinc-900/80 pwa-menu-button';
 
   return (
     <button

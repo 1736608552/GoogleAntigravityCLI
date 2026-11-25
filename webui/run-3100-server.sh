@@ -16,6 +16,7 @@ trap 'rm -f "$PIDFILE"' EXIT INT TERM
 export PATH="/vol5/@apphome/trim.openclaw/data/home/.nvm/versions/node/v24.19.0/bin:/vol5/@apphome/claude code/.npm-global/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+export PATH="$BASE_DIR/bin:$PATH"
 
 export SERVER_PORT="3100"
 export PORT="3100"

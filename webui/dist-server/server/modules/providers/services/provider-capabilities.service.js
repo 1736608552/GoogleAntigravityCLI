@@ -12,7 +12,7 @@ const PROVIDER_CAPABILITIES = {
         supportsImages: true,
         supportsFiles: true,
         supportsAbort: true,
-        supportsPermissionRequests: false,
+        supportsPermissionRequests: true,
         supportsTokenUsage: true,
         supportsEffort: true,
         supportsMessageEditing: false,

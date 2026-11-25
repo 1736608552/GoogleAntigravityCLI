@@ -166,7 +166,7 @@ const MessageCopyControl = ({
   };
 
   const toneClass = messageType === 'user'
-    ? 'text-muted-foreground hover:text-foreground'
+    ? 'text-primary-foreground/75 hover:text-primary-foreground'
     : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300';
   const copyTitle = copied ? t('copyMessage.copied') : t('copyMessage.copy');
   const rootClassName = canSelectCopyFormat

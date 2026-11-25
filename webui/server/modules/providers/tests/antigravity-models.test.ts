@@ -10,6 +10,10 @@ import {
 test('parseAntigravityModelsOutput parses tab-separated CLI model lists correctly', () => {
   const sampleCliOutput = `
 Fetching available models...
+gemini-4-hydrogen-high\tGemini 4 Hydrogen (High)
+gemini-4-hydrogen-xhigh\tGemini 4 Hydrogen (XHigh)
+gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)
+gemini-4-hydrogen-low\tGemini 4 Hydrogen (Low)
 gemini-3.8-flash-high\tGemini 3.8 Flash (High)
 gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)
 gemini-3.8-flash-low\tGemini 3.8 Flash (Low)
@@ -20,8 +24,14 @@ gpt-oss-120b-medium\tGPT-OSS 120B (Medium)
 
   const result = parseAntigravityModelsOutput(sampleCliOutput);
 
-  // 验证模型列表中仅有 4 个模型（去除了重复的 -high/-medium/-low 变体）
-  assert.equal(result.OPTIONS.length, 4);
+  // 验证模型列表中仅有 5 个基础/独立模型（去除了重复的 -xhigh/-high/-medium/-low 变体）
+  assert.equal(result.OPTIONS.length, 5);
+
+  const hydrogenBase = result.OPTIONS.find((o) => o.value === 'gemini-4-hydrogen');
+  assert.ok(hydrogenBase);
+  assert.equal(hydrogenBase.label, 'Gemini 4 Hydrogen');
+  assert.deepEqual(hydrogenBase.effort?.values.map((v) => v.value), ['low', 'medium', 'high', 'xhigh']);
+  assert.equal(result.OPTIONS.some((o) => o.value === 'gemini-4-hydrogen-xhigh'), false);
 
   // 验证基础 gemini-3.8-flash 模型具备完整的 effort 深度思考矩阵
   const flashBase = result.OPTIONS.find((o) => o.value === 'gemini-3.8-flash');

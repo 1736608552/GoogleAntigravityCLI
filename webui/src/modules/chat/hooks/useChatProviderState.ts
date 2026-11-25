@@ -13,7 +13,7 @@ import { DEFAULT_EFFORT_VALUE } from '@/shared/constants';
 import { readSelectedProvider, writeSelectedProvider } from '@/shared/selectedProvider';
 
 const FALLBACK_PROVIDER_EFFORT_VALUES: Partial<Record<LLMProvider, readonly string[]>> = {
-  antigravity: ['low', 'medium', 'high'],
+  antigravity: ['low', 'medium', 'high', 'xhigh', 'max'],
 };
 
 const toProviderEffortOptions = (
@@ -128,11 +128,11 @@ export const normalizeModelWithEffort = (
   }
   const trimmed = rawModel.trim();
   if (targetProvider === 'antigravity') {
-    const match = trimmed.match(/^gemini-3\.8-flash-(high|medium|low)$/i);
+    const match = trimmed.match(/^(gemini-.+)-(xhigh|high|medium|low|max)$/i);
     if (match) {
       return {
-        model: 'gemini-3.8-flash',
-        effort: match[1].toLowerCase(),
+        model: match[1],
+        effort: match[2].toLowerCase(),
       };
     }
   }

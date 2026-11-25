@@ -3,6 +3,14 @@ import { getToolConfig } from '@/modules/chat/tools/configs/toolConfigs';
 
 export const TOOL_GROUP_THRESHOLD = 2;
 
+/** Interactive or plan-gate tools stay ungrouped so confirmation prompts remain immediately visible. */
+const STANDALONE_INTERACTIVE_TOOLS = new Set([
+  'AskUserQuestion',
+  'ask_question',
+  'ExitPlanMode',
+  'exit_plan_mode',
+]);
+
 /** How many of a group's tool inputs the collapsed summary line spells out. */
 const PREVIEWED_TOOL_COUNT = 2;
 
@@ -126,6 +134,68 @@ export function groupConsecutiveTools(
     } else {
       items.push(...run);
     }
+
+    index = nextIndex;
+  }
+
+  return items;
+}
+
+function isAgentStepMessage(message: ChatMessage): message is ChatMessage & { toolName: string } {
+  return isGroupableToolMessage(message) && !STANDALONE_INTERACTIVE_TOOLS.has(message.toolName);
+}
+
+/**
+ * Used by chat's ChatMessagesPane to collapse any consecutive run of
+ * non-interactive agent tool calls (across different tools) into one compact
+ * "Agent Execution Steps" card.
+ */
+export function groupAgentExecutionSteps(
+  messages: ChatMessage[],
+  showThinking: boolean = true,
+): MessageListItem[] {
+  const items: MessageListItem[] = [];
+  let index = 0;
+
+  while (index < messages.length) {
+    const message = messages[index];
+
+    if (!isAgentStepMessage(message)) {
+      items.push(message);
+      index += 1;
+      continue;
+    }
+
+    const run: ChatMessage[] = [message];
+    let nextIndex = index + 1;
+
+    while (nextIndex < messages.length) {
+      const candidate = messages[nextIndex];
+
+      if (rendersNothing(candidate, showThinking)) {
+        nextIndex += 1;
+        continue;
+      }
+
+      if (isAgentStepMessage(candidate)) {
+        run.push(candidate);
+        nextIndex += 1;
+        continue;
+      }
+
+      break;
+    }
+
+    const firstToolName = run[0].toolName || 'Tool';
+    const isMixed = run.some((item) => item.toolName !== firstToolName);
+
+    items.push({
+      _isGroup: true,
+      toolName: isMixed ? 'AgentExecutionSteps' : firstToolName,
+      messages: run,
+      timestamp: run[0].timestamp,
+      preview: buildGroupPreview(run),
+    });
 
     index = nextIndex;
   }

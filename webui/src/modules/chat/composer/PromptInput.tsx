@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { SendHorizonalIcon, SquareIcon } from 'lucide-react';
+import { ArrowUpIcon, SquareIcon } from 'lucide-react';
 
 import { cn } from '@/shared/utils';
 import { Button, Tooltip } from '@/shared/ui';
@@ -40,7 +40,7 @@ export const PromptInput = React.forwardRef<HTMLFormElement, PromptInputProps>(
           ref={ref}
           data-slot="prompt-input"
           className={cn(
-            'relative overflow-hidden rounded-xl border border-border/50 bg-card/80 shadow-sm backdrop-blur-sm transition-all duration-200 focus-within:border-primary/30 focus-within:shadow-md focus-within:ring-1 focus-within:ring-primary/15',
+            'pointer-events-auto relative overflow-hidden rounded-[26px] border border-slate-200/80 bg-white/85 shadow-[0_14px_38px_-8px_rgba(15,23,42,0.12),0_4px_14px_-4px_rgba(15,23,42,0.06)] backdrop-blur-2xl transition-all duration-200 focus-within:border-primary/35 focus-within:bg-white/95 focus-within:shadow-[0_16px_42px_-8px_rgba(47,110,242,0.18)] focus-within:ring-1 focus-within:ring-primary/15 dark:border-white/[0.1] dark:bg-zinc-900/85 dark:focus-within:bg-zinc-900/95',
             className
           )}
           {...props}
@@ -96,7 +96,7 @@ export const PromptInputTextarea = React.forwardRef<
     ref={ref}
     data-slot="prompt-input-textarea"
     className={cn(
-      'chat-input-placeholder block max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent px-4 py-2 text-sm leading-6 text-foreground placeholder-muted-foreground/50 focus:outline-none sm:max-h-[300px]',
+      'chat-input-placeholder block max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent px-4 pb-1 pt-3 text-sm leading-6 text-foreground placeholder-muted-foreground/50 focus:outline-none sm:max-h-[300px]',
       className
     )}
     {...props}
@@ -206,13 +206,13 @@ export const PromptInputSubmit = React.forwardRef<HTMLButtonElement, PromptInput
         type={isActive ? 'button' : 'submit'}
         variant="default"
         size="icon"
-        className={cn('h-8 w-8 shrink-0 rounded-lg', className)}
+        className={cn('h-10 w-10 shrink-0 rounded-2xl transition-transform active:scale-95 disabled:bg-primary/45 disabled:opacity-100', className)}
         {...props}
       >
         {children ?? (isActive ? (
-          <SquareIcon className="h-3.5 w-3.5 fill-current" />
+          <SquareIcon className="h-4 w-4 fill-current" />
         ) : (
-          <SendHorizonalIcon className="h-4 w-4" />
+          <ArrowUpIcon className="h-5 w-5" strokeWidth={2.2} />
         ))}
       </Button>
     );

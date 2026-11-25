@@ -32,15 +32,17 @@ export default function LanguageSelector({ compact = false }: LanguageSelectorPr
   // Compact style for QuickSettingsPanel
   if (compact) {
     return (
-      <div className="flex items-center justify-between rounded-lg border border-transparent bg-muted/50 p-3 transition-colors hover:border-border hover:bg-accent">
-        <span className="flex items-center gap-2 text-sm text-foreground">
-          <Languages className="h-4 w-4 text-muted-foreground" />
-          {t('account.language')}
+      <div className="flex items-center justify-between gap-3 px-3.5 py-3">
+        <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium text-foreground">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/80 text-muted-foreground">
+            <Languages className="h-3.5 w-3.5" />
+          </span>
+          <span className="truncate">{t('account.language')}</span>
         </span>
         <select
           value={i18n.language}
           onChange={handleLanguageChange}
-          className="w-auto min-w-[120px] max-w-[160px] rounded-lg border border-input bg-card p-2 text-sm text-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+          className="max-w-[138px] shrink-0 rounded-xl border border-border/70 bg-muted/50 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
         >
           {languages.map((lang) => (
             <option key={lang.value} value={lang.value}>
@@ -54,8 +56,8 @@ export default function LanguageSelector({ compact = false }: LanguageSelectorPr
 
   // Full style for Settings page
   return (
-    <div className="flex items-center justify-between px-4 py-3.5">
-      <div>
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 px-4 py-3.5">
+      <div className="min-w-[180px] flex-1">
         <div className="text-sm font-medium text-foreground">
           {t('account.languageLabel')}
         </div>
@@ -66,7 +68,7 @@ export default function LanguageSelector({ compact = false }: LanguageSelectorPr
       <select
         value={i18n.language}
         onChange={handleLanguageChange}
-        className="w-36 rounded-lg border border-input bg-card p-2 text-sm text-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm text-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 sm:w-40"
       >
         {languages.map((lang) => (
           <option key={lang.value} value={lang.value}>

@@ -218,7 +218,9 @@ function buildShellCommand(
   }
 
   if (provider === 'antigravity') {
-    return initialCommand || 'antigravity';
+    const agyBin = process.env.AGY_BIN?.trim() || 'antigravity';
+    const quotedBin = agyBin.includes(' ') ? `"${agyBin}"` : agyBin;
+    return initialCommand || quotedBin;
   }
 
   // Launching with the flag is what unlocks "bypass permissions" in the CLI's

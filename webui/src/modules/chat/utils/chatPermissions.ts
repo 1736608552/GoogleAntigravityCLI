@@ -3,7 +3,7 @@ import { getClaudeSettings, saveClaudePermissions } from '@/modules/chat/utils/c
 
 export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: unknown) {
   if (!toolName) return null;
-  if (toolName !== 'Bash') return toolName;
+  if (toolName !== 'Bash' && toolName !== 'run_command') return toolName;
 
   let parsed: unknown = toolInput;
   if (typeof toolInput === 'string') {
@@ -14,18 +14,24 @@ export function buildClaudeToolPermissionEntry(toolName?: string, toolInput?: un
     }
   }
 
-  const command = parsed && typeof parsed === 'object' && 'command' in parsed && typeof parsed.command === 'string'
-    ? parsed.command.trim()
-    : '';
+  let rawCommand = '';
+  if (parsed && typeof parsed === 'object') {
+    if ('CommandLine' in parsed && typeof parsed.CommandLine === 'string') {
+      rawCommand = parsed.CommandLine;
+    } else if ('command' in parsed && typeof parsed.command === 'string') {
+      rawCommand = parsed.command;
+    }
+  }
+  const command = rawCommand.trim();
   if (!command) return toolName;
 
   const tokens = command.split(/\s+/);
   if (tokens.length === 0) return toolName;
 
   if (tokens[0] === 'git' && tokens[1]) {
-    return `Bash(${tokens[0]} ${tokens[1]}:*)`;
+    return `${toolName}(${tokens[0]} ${tokens[1]}:*)`;
   }
-  return `Bash(${tokens[0]}:*)`;
+  return `${toolName}(${tokens[0]}:*)`;
 }
 
 export function formatToolInputForDisplay(input: unknown) {

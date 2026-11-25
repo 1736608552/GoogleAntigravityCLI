@@ -224,6 +224,7 @@ export function useChatComposerState({
     ((
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
       queuedSubmission?: QueuedDraft,
+      forceImmediate?: boolean,
     ) => Promise<void>) | null
   >(null);
   const inputValueRef = useRef(input);
@@ -747,6 +748,7 @@ export function useChatComposerState({
     async (
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
       queuedSubmission?: QueuedDraft,
+      forceImmediate = false,
     ) => {
       event.preventDefault();
       const currentInput = queuedSubmission?.content ?? inputValueRef.current;
@@ -766,7 +768,7 @@ export function useChatComposerState({
       // A turn is already in flight: stash this message instead of sending it.
       // Upload attached files now so the queued record contains durable image
       // descriptors that can be sent even if another session is open later.
-      if (isLoading) {
+      if (isLoading && !forceImmediate) {
         // A run can restart in the tiny gap between scheduling and flushing a
         // queued submission. Put the same durable draft back without uploading
         // its files again.
@@ -1085,6 +1087,30 @@ export function useChatComposerState({
       clearQueuedMessage(sessionKey);
     }
   }, [sessionKey]);
+
+  // 立即发送排队消息：对齐桌面端逻辑，先中止当前正在运行的回合，再立即派发该排队消息
+  const sendQueuedDraftNow = useCallback(() => {
+    if (!queuedDraft) {
+      return;
+    }
+    const current = queuedDraft;
+    setQueuedDraft(null);
+    if (sessionKey) {
+      queuedDraftSessionRef.current = sessionKey;
+      clearQueuedMessage(sessionKey);
+    }
+    const targetSessionId = selectedSession?.id || currentSessionId || null;
+    if (targetSessionId) {
+      onSessionIdle?.(targetSessionId);
+      sendMessage({
+        type: 'chat.abort',
+        sessionId: targetSessionId,
+      });
+    }
+    setTimeout(() => {
+      void handleSubmitRef.current?.(createFakeSubmitEvent(), current, true);
+    }, 100);
+  }, [currentSessionId, onSessionIdle, queuedDraft, selectedSession?.id, sendMessage, sessionKey]);
 
   // A voice transcript either fills the input (to edit before sending) or, when the
   // user tapped "stop and send", is submitted straight away. Mirror the value into
@@ -1405,6 +1431,7 @@ export function useChatComposerState({
     queuedDraft,
     editQueuedDraft,
     deleteQueuedDraft,
+    sendQueuedDraftNow,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,

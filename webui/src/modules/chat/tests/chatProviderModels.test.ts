@@ -70,6 +70,10 @@ afterEach(() => {
 });
 
 test('normalizeModelWithEffort 能够正确将带有 effort 后缀的模型规整为基础模型', () => {
+  assert.deepEqual(normalizeModelWithEffort('gemini-4-hydrogen-xhigh', 'antigravity'), {
+    model: 'gemini-4-hydrogen',
+    effort: 'xhigh',
+  });
   assert.deepEqual(normalizeModelWithEffort('gemini-3.8-flash-high', 'antigravity'), {
     model: 'gemini-3.8-flash',
     effort: 'high',

@@ -122,11 +122,15 @@ export class TranslationCache {
 export function defaultReasoningConfig() {
     return {
         enabled: true,
-        engine: 'ollama',
+        engine: 'bing',
         showOriginal: true,
         defaultOpenOriginal: false,
         minChars: 30,
+        migratedToBing: true,
         engines: {
+            bing: {
+                timeoutMs: 12_000,
+            },
             ollama: {
                 baseURL: 'http://127.0.0.1:11434',
                 model: 'qwen2.5:1.5b',

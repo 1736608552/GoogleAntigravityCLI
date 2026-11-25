@@ -103,7 +103,7 @@ export default function WorkspaceTabs({
     <PillBar
       role="tablist"
       aria-label={t('tabs.views', { defaultValue: 'Workspace views' })}
-      className="min-w-max border border-border/40 bg-muted/50 shadow-inner shadow-black/[0.025] dark:shadow-black/10"
+      className="min-w-max gap-0.5 rounded-full border border-slate-200/70 bg-white/75 p-1 shadow-sm backdrop-blur-md dark:border-white/[0.08] dark:bg-zinc-900/75"
     >
       {tabs.map((tab, index) => {
         const isActive = tab.id === activeTab;
@@ -123,7 +123,7 @@ export default function WorkspaceTabs({
                 isActive={isActive}
                 onClick={() => setActiveTab(tab.id)}
                 onKeyDown={handleTabKeyDown}
-                className="h-8 max-w-44 px-2.5 py-[5px]"
+                className="h-7 max-w-44 rounded-full px-2.5 py-1 text-xs sm:h-8 sm:px-3 sm:py-[5px]"
               >
                 {tab.kind === 'builtin' ? (
                   <tab.icon className="h-3.5 w-3.5 shrink-0" strokeWidth={isActive ? 2.2 : 1.8} />
@@ -134,7 +134,7 @@ export default function WorkspaceTabs({
                     className="flex h-3.5 w-3.5 shrink-0 items-center justify-center [&>svg]:h-full [&>svg]:w-full"
                   />
                 )}
-                <span className={`${isActive ? 'inline max-w-28' : 'hidden'} truncate sm:max-w-36 lg:inline`}>
+                <span className={`${isActive ? 'inline max-w-16 sm:max-w-28' : 'hidden'} truncate lg:inline lg:max-w-36`}>
                   {displayLabel}
                 </span>
               </Pill>

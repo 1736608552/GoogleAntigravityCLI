@@ -16,8 +16,6 @@ import MessageSpeakControl from '@/modules/chat/transcript/MessageSpeakControl';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
 import { MemoryCitations } from '@/modules/chat/transcript/MemoryCitations';
 import MessageQuotaFooter from '@/modules/chat/transcript/MessageQuotaFooter';
-import TaskPlanChecklist from '@/modules/chat/transcript/TaskPlanChecklist';
-import RunningStepAccordion from '@/modules/chat/transcript/RunningStepAccordion';
 
 type MessageComponentProps = {
   message: ChatMessage;
@@ -121,23 +119,23 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
               <ChatMessageFiles files={message.files} />
             )}
             {userCopyContent.trim().length > 0 || (!message.images?.length && !message.files?.length) ? (
-              <div className="group max-w-full rounded-2xl rounded-br-md border border-border/60 bg-muted/60 px-3 py-2 text-foreground shadow-sm dark:bg-gray-800/60 sm:px-4">
-                <div dir="auto" className="break-words font-serif text-sm">
+              <div className="chat-user-bubble group max-w-full rounded-2xl rounded-br-md bg-primary px-3.5 py-2.5 text-primary-foreground shadow-[0_2px_10px_rgba(47,110,242,0.18)] dark:bg-primary/90 sm:px-4">
+                <div dir="auto" className="break-words font-sans text-sm">
                   <Markdown
                     breaks
-                    className="prose prose-sm max-w-none font-serif dark:prose-invert"
+                    className="prose prose-sm prose-invert max-w-none font-sans text-primary-foreground [&_*]:text-primary-foreground"
                   >
                     {message.content}
                   </Markdown>
                 </div>
-                <div className="mt-1 flex items-center justify-end gap-1 text-xs text-muted-foreground">
+                <div className="mt-1 flex items-center justify-end gap-1 text-xs text-primary-foreground/75">
                   {onEditMessage && message.transcriptAnchorId && (
                     <button
                       type="button"
                       onClick={() => onEditMessage(message)}
                       title={t('message.editAndResend')}
                       aria-label={t('message.editAndResend')}
-                      className="rounded p-1 opacity-0 transition-opacity hover:bg-muted focus-visible:opacity-100 group-hover:opacity-100"
+                      className="rounded p-1 text-primary-foreground/75 opacity-0 transition-opacity hover:bg-white/15 hover:text-primary-foreground focus-visible:opacity-100 group-hover:opacity-100"
                     >
                       <PencilIcon className="h-3.5 w-3.5" />
                     </button>
@@ -148,7 +146,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                       onClick={() => onForkFromMessage(message)}
                       title={t('message.forkFromHere')}
                       aria-label={t('message.forkFromHere')}
-                      className="rounded p-1 opacity-0 transition-opacity hover:bg-muted focus-visible:opacity-100 group-hover:opacity-100"
+                      className="rounded p-1 text-primary-foreground/75 opacity-0 transition-opacity hover:bg-white/15 hover:text-primary-foreground focus-visible:opacity-100 group-hover:opacity-100"
                     >
                       <GitBranchIcon className="h-3.5 w-3.5" />
                     </button>
@@ -237,31 +235,16 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 selectedProject={selectedProject}
               />
             ) : message.isToolUse ? (
-              <RunningStepAccordion
-                title={(() => {
-                  const toolName = message.toolName || '工具执行';
-                  const summary = String(message.displayText || '').trim();
-                  return summary ? `${toolName}: ${summary}` : toolName;
-                })()}
-                status={
-                  message.toolStatus === 'failed' || message.toolResult?.isError
-                    ? 'error'
-                    : (message.toolStatus === 'running' || message.toolStatus === 'in_progress' || (Boolean(message.isStreaming) && !message.toolResult))
-                      ? 'running'
-                      : 'completed'
-                }
-                startedAt={message.timestamp ? new Date(message.timestamp).getTime() : undefined}
-                defaultExpanded={Boolean(message.toolResult?.isError || (!message.toolResult && (message.toolStatus === 'running' || message.isStreaming)))}
-              >
-                {Boolean(message.displayText) && (
-                  <div className="mb-2 flex flex-col">
-                    <Markdown className="prose prose-sm max-w-none font-serif dark:prose-invert">
+              <>
+                <div className="flex flex-col">
+                  <div className="flex flex-col">
+                    <Markdown className="prose prose-sm max-w-none font-sans dark:prose-invert">
                       {String(message.displayText || '')}
                     </Markdown>
                   </div>
-                )}
+                </div>
 
-                {Boolean(message.toolInput) && (
+                {message.toolInput && (
                   <ToolRenderer
                     toolName={message.toolName || 'UnknownTool'}
                     toolInput={message.toolInput}
@@ -278,13 +261,13 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 )}
 
                 {/* Tool Result Section — Bash renders its output inside the command row above. */}
-                {Boolean(message.toolResult && message.toolName !== 'Bash' && !shouldHideToolResult(message.toolName || 'UnknownTool', message.toolResult)) && (
-                  message.toolResult?.isError ? (
+                {message.toolResult && message.toolName !== 'Bash' && !shouldHideToolResult(message.toolName || 'UnknownTool', message.toolResult) && (
+                  message.toolResult.isError ? (
                     // Error results — collapsed red row that expands to the content
                     <div id={`tool-result-${message.toolId}`} className="scroll-mt-4">
                       <ToolErrorDisplay
                         label={t('messageTypes.error')}
-                        content={String(message.toolResult?.content || '')}
+                        content={String(message.toolResult.content || '')}
                       />
                     </div>
                   ) : (
@@ -303,7 +286,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                     </div>
                   )
                 )}
-              </RunningStepAccordion>
+              </>
             ) : message.isThinking ? (
               /* Thinking messages — Reasoning component (ai-elements pattern) */
               <Reasoning defaultOpen={isExporting}>
@@ -312,7 +295,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                   <ReasoningTranslatedBody
                     rawText={String(message.content || '')}
                     renderContent={(text) => (
-                      <Markdown className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert">
+                      <Markdown className="prose prose-sm prose-gray max-w-none font-sans dark:prose-invert">
                         {text}
                       </Markdown>
                     )}
@@ -325,7 +308,7 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                 </ReasoningContent>
               </Reasoning>
             ) : (
-              <div dir="auto" className="text-sm text-gray-700 dark:text-gray-300">
+              <div dir="auto" className="text-sm text-foreground/90 dark:text-zinc-200">
                 {/* Reasoning accordion */}
                 {showThinking && message.reasoning && (
                   <Reasoning className="mb-3" defaultOpen={false}>
@@ -375,14 +358,11 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                   // One component for both states on purpose: swapping element
                   // types here remounted the whole reply the instant it finished.
                   return message.type === 'assistant' ? (
-                    <div className="space-y-3">
-                      <TaskPlanChecklist content={content} />
-                      <StreamingMarkdown
-                        content={content}
-                        isStreaming={Boolean(message.isStreaming)}
-                        className="prose prose-sm prose-gray max-w-none font-serif dark:prose-invert"
-                      />
-                    </div>
+                    <StreamingMarkdown
+                      content={content}
+                      isStreaming={Boolean(message.isStreaming)}
+                      className="prose prose-sm prose-gray max-w-none font-sans dark:prose-invert"
+                    />
                   ) : message.type === 'error' ? (
                     isToolLikeError ? (
                       <ToolErrorDisplay

@@ -50,7 +50,7 @@ const PROVIDER_CAPABILITIES: Partial<Record<LLMProvider, ProviderCapabilities>> 
     supportsImages: true,
     supportsFiles: true,
     supportsAbort: true,
-    supportsPermissionRequests: false,
+    supportsPermissionRequests: true,
     supportsTokenUsage: true,
     supportsEffort: true,
     supportsMessageEditing: false,

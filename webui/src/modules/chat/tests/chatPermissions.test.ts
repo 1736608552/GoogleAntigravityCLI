@@ -22,3 +22,14 @@ test('buildClaudeToolPermissionEntry accepts an already parsed tool input', () =
 test('buildClaudeToolPermissionEntry rejects JSON with no string command', () => {
   assert.equal(buildClaudeToolPermissionEntry('Bash', JSON.stringify({ command: false })), 'Bash');
 });
+
+test('buildClaudeToolPermissionEntry derives scoped rules for Antigravity run_command', () => {
+  assert.equal(
+    buildClaudeToolPermissionEntry('run_command', { CommandLine: 'npm run build' }),
+    'run_command(npm:*)',
+  );
+  assert.equal(
+    buildClaudeToolPermissionEntry('run_command', JSON.stringify({ CommandLine: 'git status' })),
+    'run_command(git status:*)',
+  );
+});

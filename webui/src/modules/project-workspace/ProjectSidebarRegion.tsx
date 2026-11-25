@@ -29,7 +29,7 @@ function ProjectSidebarRegion({
 
   if (!isMobile) {
     return (
-      <div className="h-full flex-shrink-0 border-r border-border/50">
+      <div className="h-full flex-shrink-0 border-r border-slate-200/75 bg-card/65 backdrop-blur-xl dark:border-white/[0.08] dark:bg-zinc-950/60">
         <Sidebar {...sidebarSharedProps} />
       </div>
     );
@@ -37,18 +37,18 @@ function ProjectSidebarRegion({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex transition-all duration-150 ease-out ${
+      className={`fixed inset-0 z-50 flex transition-all duration-200 ease-out ${
         sidebarOpen ? 'visible opacity-100' : 'invisible opacity-0'
       }`}
     >
       <button
-        className="fixed inset-0 bg-background/60 backdrop-blur-sm transition-opacity duration-150 ease-out"
+        className="backdrop-blur-xs fixed inset-0 bg-slate-900/25 transition-opacity duration-200 ease-out dark:bg-black/55"
         onClick={handleBackdropClick}
         onTouchStart={handleBackdropTouch}
         aria-label={t('versionUpdate.ariaLabels.closeSidebar')}
       />
       <div
-        className={`relative h-full w-[85vw] max-w-sm transform border-r border-border/40 bg-card transition-transform duration-150 ease-out sm:w-80 ${
+        className={`relative h-full w-[86vw] max-w-[340px] transform overflow-hidden rounded-r-3xl border-r border-slate-200/80 bg-background/95 shadow-2xl backdrop-blur-2xl transition-transform duration-200 ease-out dark:border-white/[0.09] sm:w-80 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         onClick={(event) => event.stopPropagation()}

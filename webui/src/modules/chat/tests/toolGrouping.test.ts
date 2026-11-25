@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 import { test } from 'vitest';
 
-import { groupConsecutiveTools, isToolGroupItem } from '@/modules/chat/utils/toolGrouping';
+import { groupAgentExecutionSteps, groupConsecutiveTools, isToolGroupItem } from '@/modules/chat/utils/toolGrouping';
 import type { ChatMessage } from '@/shared/types';
 
 /**
@@ -57,7 +57,7 @@ test('a group of more than two calls reports the remainder', () => {
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '/a.ts, /b.ts, +2 more');
+  assert.equal(group.preview, '/a.ts, /b.ts, +2 项');
 });
 
 test('a single tool call is not grouped', () => {
@@ -100,7 +100,7 @@ test('an unparsable tool input does not throw while grouping', () => {
   // stays a string, so there is nothing to show. The group must still form, the
   // raw JSON must not leak into the summary line, and both calls must be
   // accounted for as unnamed.
-  assert.equal(group.preview, '+2 more');
+  assert.equal(group.preview, '+2 项');
 });
 
 test('a tool with no config is previewed by what it operated on', () => {
@@ -139,7 +139,7 @@ test('a call the line cannot name is counted in the remainder', () => {
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '/a.ts, +1 more');
+  assert.equal(group.preview, '/a.ts, +1 项');
 });
 
 test('the named calls plus the remainder always add up to the group size', () => {
@@ -154,7 +154,7 @@ test('the named calls plus the remainder always add up to the group size', () =>
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '/b.ts, +2 more');
+  assert.equal(group.preview, '/b.ts, +2 项');
 });
 
 test('a group that can name nothing still accounts for every call', () => {
@@ -168,7 +168,7 @@ test('a group that can name nothing still accounts for every call', () => {
 
   const [group] = items;
   assert.ok(isToolGroupItem(group));
-  assert.equal(group.preview, '+5 more');
+  assert.equal(group.preview, '+5 项');
 });
 
 test('hidden reasoning between two tool calls does not split the run', () => {
@@ -216,4 +216,31 @@ test('a subagent container is never absorbed into a group', () => {
 
   assert.equal(items.length, 2);
   assert.equal(items.filter(isToolGroupItem).length, 0);
+});
+
+test('groupAgentExecutionSteps merges consecutive calls across different tools into one step card', () => {
+  const items = groupAgentExecutionSteps([
+    toolMessage('list_dir', { DirectoryPath: '/repo/src' }),
+    toolMessage('view_file', { AbsolutePath: '/repo/src/session.ts' }),
+    toolMessage('run_command', { CommandLine: 'npm test', toolSummary: '运行单元测试' }),
+  ]);
+
+  assert.equal(items.length, 1);
+  const [group] = items;
+  assert.ok(isToolGroupItem(group));
+  assert.equal(group.toolName, 'AgentExecutionSteps');
+  assert.equal(group.messages.length, 3);
+});
+
+test('groupAgentExecutionSteps keeps interactive confirmation tools standalone', () => {
+  const items = groupAgentExecutionSteps([
+    toolMessage('Read', { file_path: '/a.ts' }),
+    toolMessage('AskUserQuestion', { questions: [] }),
+    toolMessage('Edit', { file_path: '/a.ts' }),
+  ]);
+
+  assert.equal(items.length, 3);
+  assert.equal(isToolGroupItem(items[0]), true);
+  assert.equal(isToolGroupItem(items[1]), false);
+  assert.equal(isToolGroupItem(items[2]), true);
 });

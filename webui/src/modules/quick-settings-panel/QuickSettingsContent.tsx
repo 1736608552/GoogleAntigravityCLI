@@ -1,9 +1,11 @@
 import {
+  ArrowUpRight,
   Brain,
   Eye,
   Languages,
   Mic,
   Moon,
+  Sliders,
   Sun,
   type LucideIcon,
 } from 'lucide-react';
@@ -11,7 +13,7 @@ import { useTranslation } from 'react-i18next';
 
 import { DarkModeToggle } from '@/shared/ui';
 import { LanguageSelector } from '@/modules/i18n';
-import { SETTING_ROW_CLASS } from '@/shared/constants';
+import { cn } from '@/shared/utils';
 import type { PreferenceToggleKey, QuickSettingsPreferences } from '@/shared/types';
 import QuickSettingsSection from '@/modules/quick-settings-panel/QuickSettingsSection';
 import QuickSettingsToggleRow from '@/modules/quick-settings-panel/QuickSettingsToggleRow';
@@ -53,13 +55,17 @@ type QuickSettingsContentProps = {
   isDarkMode: boolean;
   preferences: QuickSettingsPreferences;
   onPreferenceChange: (key: PreferenceToggleKey, value: boolean) => void;
+  onOpenFullSettings?: () => void;
+  isMobile?: boolean;
 };
 
-/** Rendered by QuickSettingsPanelView to show the drawer's appearance, tool display and input preference rows. */
+/** Rendered by QuickSettingsPanelView to show the drawer's appearance, tool display and input preference cards. */
 export default function QuickSettingsContent({
   isDarkMode,
   preferences,
   onPreferenceChange,
+  onOpenFullSettings,
+  isMobile = false,
 }: QuickSettingsContentProps) {
   const { t } = useTranslation('settings');
   const inputSettingToggles = preferences.voiceEnabled
@@ -79,16 +85,23 @@ export default function QuickSettingsContent({
   );
 
   return (
-    <div className="flex-1 space-y-6 overflow-y-auto overflow-x-hidden bg-background p-4">
+    <div
+      className={cn(
+        'flex-1 space-y-5 overflow-y-auto overflow-x-hidden p-4',
+        isMobile && 'pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]',
+      )}
+    >
       <QuickSettingsSection title={t('quickSettings.sections.appearance')}>
-        <div className={SETTING_ROW_CLASS}>
-          <span className="flex items-center gap-2 text-sm text-foreground">
-            {isDarkMode ? (
-              <Moon className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <Sun className="h-4 w-4 text-muted-foreground" />
-            )}
-            {t('quickSettings.darkMode')}
+        <div className="flex items-center justify-between gap-3 px-3.5 py-3">
+          <span className="flex min-w-0 items-center gap-2.5 text-sm font-medium text-foreground">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/80 text-muted-foreground">
+              {isDarkMode ? (
+                <Moon className="h-3.5 w-3.5" />
+              ) : (
+                <Sun className="h-3.5 w-3.5" />
+              )}
+            </span>
+            <span className="truncate">{t('quickSettings.darkMode')}</span>
           </span>
           <DarkModeToggle />
         </div>
@@ -101,10 +114,27 @@ export default function QuickSettingsContent({
 
       <QuickSettingsSection title={t('quickSettings.sections.inputSettings')}>
         {renderToggleRows(inputSettingToggles)}
-        <p className="ml-3 text-xs text-muted-foreground">
-          {t('quickSettings.sendByCtrlEnterDescription')}
-        </p>
       </QuickSettingsSection>
+
+      <p className="-mt-2 px-1 text-xs leading-relaxed text-muted-foreground">
+        {t('quickSettings.sendByCtrlEnterDescription')}
+      </p>
+
+      {onOpenFullSettings && (
+        <button
+          type="button"
+          onClick={onOpenFullSettings}
+          className="shadow-xs flex w-full touch-manipulation items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-background/80 px-4 py-3 text-left text-sm font-medium text-foreground transition-all hover:border-primary/30 hover:bg-primary/5 active:scale-[0.99] dark:border-white/[0.08]"
+        >
+          <span className="flex items-center gap-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Sliders className="h-3.5 w-3.5" />
+            </span>
+            <span>{t('title', { defaultValue: '完整设置中心' })}</span>
+          </span>
+          <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
+        </button>
+      )}
     </div>
   );
 }

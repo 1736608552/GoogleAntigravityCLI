@@ -25,6 +25,7 @@ type WorkspaceMainProps = {
   sendMessage: (message: unknown) => void;
   isMobile: boolean;
   onMenuClick: () => void;
+  onOpenQuickSettings: () => void;
   isLoading: boolean;
   onNavigateToSession: (targetSessionId: string, options?: SessionNavigationOptions) => void;
   onSessionEstablished: (sessionId: string, context: SessionEstablishedContext) => void;
@@ -47,6 +48,7 @@ function WorkspaceMain({
   sendMessage,
   isMobile,
   onMenuClick,
+  onOpenQuickSettings,
   isLoading,
   onNavigateToSession,
   onSessionEstablished,
@@ -138,6 +140,7 @@ function WorkspaceMain({
         shouldShowBrowserTab={shouldShowBrowserTab}
         isMobile={isMobile}
         onMenuClick={onMenuClick}
+        onOpenQuickSettings={onOpenQuickSettings}
       />
 
       <div className="flex min-h-0 flex-1 overflow-hidden">

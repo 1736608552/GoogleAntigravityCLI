@@ -20,27 +20,27 @@ export default function SidebarCollapsed({
   t,
 }: SidebarCollapsedProps) {
   return (
-    <div className="flex h-full w-12 flex-col items-center gap-1 bg-background/80 py-3 backdrop-blur-sm">
+    <div className="flex h-full w-14 flex-col items-center gap-1.5 bg-transparent py-3">
       {/* Expand button with brand logo */}
       <button
         onClick={onExpand}
-        className="group flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-accent/80"
+        className="hover:shadow-xs group flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-all hover:bg-card hover:text-foreground active:scale-95"
         aria-label={t('common:versionUpdate.ariaLabels.showSidebar')}
         title={t('common:versionUpdate.ariaLabels.showSidebar')}
       >
-        <PanelLeftOpen className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+        <PanelLeftOpen className="h-4 w-4 transition-colors" />
       </button>
 
-      <div className="nav-divider my-1 w-6" />
+      <div className="nav-divider my-1 w-7" />
 
       {/* Settings */}
       <button
         onClick={onShowSettings}
-        className="group flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-accent/80"
+        className="hover:shadow-xs group flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-all hover:bg-card hover:text-foreground active:scale-95"
         aria-label={t('actions.settings')}
         title={t('actions.settings')}
       >
-        <Settings className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-foreground" />
+        <Settings className="h-4 w-4 transition-colors" />
       </button>
 
       {/* Restart-required indicator */}

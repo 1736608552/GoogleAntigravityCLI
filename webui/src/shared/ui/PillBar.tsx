@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef, ReactNode } from 'react';
+import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 
 import { cn } from '@/shared/utils';
 
@@ -27,9 +27,10 @@ type PillProps = Omit<ComponentPropsWithoutRef<'button'>, 'onClick'> & {
 };
 
 /** A single tab inside PillBar, used by the project-workspace and settings modules. */
-export function Pill({ isActive, onClick, children, className, ...props }: PillProps) {
-  return (
+export const Pill = forwardRef<HTMLButtonElement, PillProps>(
+  ({ isActive, onClick, children, className, ...props }, ref) => (
     <button
+      ref={ref}
       type="button"
       onClick={onClick}
       className={cn(
@@ -43,5 +44,6 @@ export function Pill({ isActive, onClick, children, className, ...props }: PillP
     >
       {children}
     </button>
-  );
-}
+  ),
+);
+Pill.displayName = 'Pill';

@@ -1,28 +1,30 @@
 import * as React from 'react';
 import { authenticatedFetch } from '@/shared/api';
 
-export interface ReasoningTranslateEngineConfig {
+export type ReasoningTranslateEngineConfig = {
   provider?: string;
   model?: string;
   baseURL?: string;
   apiKey?: string;
   displayName?: string;
   timeoutMs?: number;
-}
+};
 
-export interface ReasoningTranslateConfig {
+export type ReasoningTranslateConfig = {
   enabled: boolean;
-  engine: 'ollama' | 'openai-compatible' | 'antigravity';
+  engine: 'bing' | 'ollama' | 'openai-compatible' | 'antigravity';
   showOriginal: boolean;
   defaultOpenOriginal: boolean;
   minChars: number;
+  migratedToBing?: boolean;
   engines: {
+    bing?: ReasoningTranslateEngineConfig;
     ollama: ReasoningTranslateEngineConfig;
     'openai-compatible': ReasoningTranslateEngineConfig;
     antigravity: ReasoningTranslateEngineConfig;
   };
   glossary: string[];
-}
+};
 
 export interface ReasoningTranslateState {
   config: ReasoningTranslateConfig | null;
