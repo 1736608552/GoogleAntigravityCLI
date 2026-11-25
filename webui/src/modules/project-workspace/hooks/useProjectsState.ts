@@ -721,12 +721,43 @@ export function useProjectsState({
     void hydrateProjectTaskMaster(selectedProject.projectId);
   }, [hydrateProjectTaskMaster, selectedProject?.projectId]);
 
-  // Auto-select the project when there is only one, so the user lands on the new session page
+  // Persist last active project & session so reopening the app restores the previous window
   useEffect(() => {
-    if (!isLoadingProjects && projects.length === 1 && !selectedProject && !sessionId) {
-      setSelectedProject(projects[0]);
+    try {
+      if (selectedProject?.projectId) {
+        localStorage.setItem('agy_last_project_id', selectedProject.projectId);
+      }
+      if (selectedSession?.id) {
+        localStorage.setItem('agy_last_session_id', selectedSession.id);
+      }
+    } catch {
+      // Ignore storage quota errors
     }
-  }, [isLoadingProjects, projects, selectedProject, sessionId]);
+  }, [selectedProject?.projectId, selectedSession?.id]);
+
+  // Auto-restore last project/session (or fall back to the first project) on root landing
+  useEffect(() => {
+    if (isLoadingProjects || projects.length === 0 || selectedProject || sessionId) {
+      return;
+    }
+    let lastProjectId = '';
+    let lastSessionId = '';
+    try {
+      lastProjectId = localStorage.getItem('agy_last_project_id') || '';
+      lastSessionId = localStorage.getItem('agy_last_session_id') || '';
+    } catch {
+      // Ignore storage errors
+    }
+    const targetProject =
+      (lastProjectId && projects.find((p) => p.projectId === lastProjectId)) || projects[0];
+    setSelectedProject(targetProject);
+    if (lastSessionId) {
+      const hasSession = (targetProject.sessions || []).some((s) => s.id === lastSessionId);
+      if (hasSession) {
+        navigate(`/session/${lastSessionId}`, { replace: true });
+      }
+    }
+  }, [isLoadingProjects, projects, selectedProject, sessionId, navigate]);
 
   // Realtime sidebar updates. The backend pushes per-session deltas
   // (`session_upserted`) instead of full project snapshots, so each event is
