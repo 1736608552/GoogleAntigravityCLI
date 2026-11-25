@@ -2,6 +2,8 @@
 
 面向 **Google Antigravity** 的全功能 WebUI 与移动端协作工作台，集成实时代码对话、智能体执行步骤追踪、终端、Git 面板、文件管理与星云小灵宠伴侣。
 
+![GoogleAntigravityCLI 界面预览](webui/docs/preview.jpg)
+
 ---
 
 ## 核心特性
