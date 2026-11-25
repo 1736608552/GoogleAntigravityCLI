@@ -1332,17 +1332,34 @@ export async function spawnAntigravity(
 
         if (err instanceof QuotaExhaustedError) {
           const currentSessionId = capturedSessionId || sessionId || null;
-          console.warn(`[Antigravity Runtime] 🚨 触发 429 速率/配额限制 (回合尝试 ${attempt}/${TOTAL_MAX_ATTEMPTS})，保持当前账号启动智能时间退避自愈...`);
+          const rawInfo = `${err.resetTimeMsg || ''} ${err.message || ''} ${err.rawText || ''}`;
+          const resetMatch = rawInfo.match(/(\d+(?:\.\d+)?)\s*(s|sec|seconds?)\b/i);
+          const isShortRateLimit = resetMatch !== null && parseFloat(resetMatch[1]) <= 60;
+
+          if (!isShortRateLimit) {
+            const activeEmail = antigravityAccountsService.getActiveEmail() || '当前账号';
+            const exhaustedMsg = `🚫 **【账号额度已用尽】** 账号 \`${activeEmail}\` 额度已耗尽${err.resetTimeMsg ? `（预计重置：${err.resetTimeMsg}）` : ''}，请切换其他账号或等待额度重置后再试。`;
+            console.warn(`[Antigravity Runtime] 🚫 账号额度已用尽，实时播报并终止重试: ${activeEmail}`);
+            ws.send(createNormalizedMessage({
+              kind: 'error',
+              content: exhaustedMsg,
+              sessionId: currentSessionId,
+              provider: 'antigravity',
+            }));
+            const completeMsg = createCompleteMessage({
+              sessionId: currentSessionId,
+              exitCode: 1,
+              provider: 'antigravity',
+            });
+            ws.send(completeMsg);
+            return;
+          }
+
+          console.warn(`[Antigravity Runtime] 🚨 触发 429 速率限制 (回合尝试 ${attempt}/${TOTAL_MAX_ATTEMPTS})，保持当前账号启动智能时间退避自愈...`);
 
           // 保持当前账号不变，启动智能指数退避等待
           if (attempt < TOTAL_MAX_ATTEMPTS) {
-            let waitSeconds = 15;
-            const resetMatch = (err.resetTimeMsg || err.message || err.rawText || '').match(/(\d+(?:\.\d+)?)\s*(s|sec|seconds?)/i);
-            if (resetMatch) {
-              waitSeconds = Math.min(Math.ceil(parseFloat(resetMatch[1])) + 2, 60);
-            } else {
-              waitSeconds = Math.min(15 + (attempt - 1) * 10, 45);
-            }
+            const waitSeconds = Math.min(Math.ceil(parseFloat(resetMatch![1])) + 2, 60);
 
             console.warn(`[Antigravity Runtime] ⏳ 429 频控退避：保持当前账号，等待 ${waitSeconds} 秒后自动自愈续跑 (尝试 ${attempt}/${TOTAL_MAX_ATTEMPTS})...`);
 

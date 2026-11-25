@@ -494,12 +494,22 @@ class AntigravityAccountsService {
       const claudeGroup = groups.find((g: any) => /claude|gpt|3p/i.test(g?.displayName || '')) || groups[1];
 
       const parseBucket = (g: any, win: string, fallbackDesc: string): AntigravityQuotaPool => {
-        const b = (g?.buckets || []).find((x: any) => x.window === win) || {};
-        const frac = typeof b.remainingFraction === 'number' ? b.remainingFraction : 1;
+        const candidates = (g?.buckets || []).filter((x: any) => x.window === win);
+        const resolveFrac = (item: any): number => {
+          if (!item) return 1;
+          if (typeof item.remainingFraction === 'number') return item.remainingFraction;
+          const hasFuture = item.resetTime ? new Date(item.resetTime).getTime() > Date.now() : false;
+          return hasFuture ? 0 : 1;
+        };
+        const b = candidates.reduce((minItem: any, cur: any) => {
+          if (!minItem) return cur;
+          return resolveFrac(cur) < resolveFrac(minItem) ? cur : minItem;
+        }, null as any);
+        const rt = b?.resetTime || null;
+        const frac = Math.max(0, Math.min(1, resolveFrac(b)));
         const pct = Math.round(frac * 1000) / 10;
         const used = parseFloat((100 - pct).toFixed(1));
-        const rt = b.resetTime || null;
-        const desc = b.description || fallbackDesc;
+        const desc = b?.description || fallbackDesc;
         const resetsIn = formatDynamicCountdown(rt, desc, win === '5h', pct);
         return {
           title: `${g?.displayName || (win === '5h' ? '实时算力' : '周期算力')} ${win === '5h' ? '5小时额度' : '每周总额度'}`,
@@ -749,8 +759,13 @@ class AntigravityAccountsService {
         targetAccount = accounts[0];
       }
 
-      let tokenData = targetAccount?.tokenData || this.readActiveToken();
-      if (!tokenData) return this.refreshSnapshotCountdowns(this.cachedQuotaSnapshot);
+      let tokenData = targetEmail ? targetAccount?.tokenData : (targetAccount?.tokenData || this.readActiveToken());
+      if (!tokenData) {
+        if (targetEmail) {
+          return targetAccount?.quotaSnapshot ? this.refreshSnapshotCountdowns(targetAccount.quotaSnapshot) : null;
+        }
+        return this.refreshSnapshotCountdowns(this.cachedQuotaSnapshot);
+      }
 
       // Token 鲜活性检查：若即将过期则立即刷新
       const expiryTime = tokenData?.token?.expiry ? new Date(tokenData.token.expiry).getTime() : 0;
@@ -763,7 +778,12 @@ class AntigravityAccountsService {
       }
 
       let token = tokenData?.token?.access_token;
-      if (!token) return this.refreshSnapshotCountdowns(this.cachedQuotaSnapshot);
+      if (!token) {
+        if (targetEmail) {
+          return targetAccount?.quotaSnapshot ? this.refreshSnapshotCountdowns(targetAccount.quotaSnapshot) : null;
+        }
+        return this.refreshSnapshotCountdowns(this.cachedQuotaSnapshot);
+      }
 
       const headers: Record<string, string> = {
         'Authorization': `Bearer ${token}`,
@@ -865,8 +885,8 @@ class AntigravityAccountsService {
       // 若当前系统已有语言服务器拉取的原生真实双配额，严禁被 REST API 的假 100% 覆盖污染！
       const existingRealSnapshot =
         (accEmail ? this.accountQuotaSnapshots.get(accEmail.toLowerCase())?.snapshot : null) ||
-        this.cachedQuotaSnapshot ||
-        targetAccount?.quotaSnapshot;
+        targetAccount?.quotaSnapshot ||
+        (!targetEmail ? this.cachedQuotaSnapshot : null);
 
       const hasValidLsData =
         existingRealSnapshot &&

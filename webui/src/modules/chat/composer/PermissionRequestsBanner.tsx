@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ShieldAlertIcon } from 'lucide-react';
 
@@ -26,6 +26,38 @@ type PermissionRequestsBannerProps = {
   handleGrantToolPermission: (suggestion: { entry: string; toolName: string }) => { success: boolean };
 };
 
+const AUTO_ALLOW_SECONDS = 15;
+
+function AutoAllowButton({ onAllow }: { onAllow: () => void }) {
+  const [secondsLeft, setSecondsLeft] = useState(AUTO_ALLOW_SECONDS);
+  const onAllowRef = useRef(onAllow);
+  onAllowRef.current = onAllow;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          window.clearInterval(timer);
+          onAllowRef.current();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <ConfirmationAction
+      variant="default"
+      className="rounded-full px-4 text-xs shadow-sm tabular-nums"
+      onClick={onAllow}
+    >
+      {`允许本次 (${secondsLeft}s)`}
+    </ConfirmationAction>
+  );
+}
+
 /**
  * Rendered by chat's ChatComposer above the input to surface pending tool
  * permission requests and their allow/deny/remember actions.
@@ -41,7 +73,19 @@ export default function PermissionRequestsBanner({
     (r) => r.toolName !== 'ExitPlanMode' && r.toolName !== 'exit_plan_mode'
   );
 
-  if (!filteredRequests.length) {
+  // Prevent brief flash of stale/transient permission requests during page refresh
+  const [settled, setSettled] = useState(false);
+  const hasRequests = filteredRequests.length > 0;
+  useEffect(() => {
+    if (!hasRequests) {
+      setSettled(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSettled(true), 120);
+    return () => window.clearTimeout(timer);
+  }, [hasRequests]);
+
+  if (!hasRequests || !settled) {
     return null;
   }
 
@@ -134,13 +178,9 @@ export default function PermissionRequestsBanner({
               >
                 {rememberLabel}
               </ConfirmationAction>
-              <ConfirmationAction
-                variant="default"
-                className="rounded-full px-4 text-xs shadow-sm"
-                onClick={() => handlePermissionDecision(request.requestId, { allow: true })}
-              >
-                允许本次
-              </ConfirmationAction>
+              <AutoAllowButton
+                onAllow={() => handlePermissionDecision(request.requestId, { allow: true })}
+              />
             </ConfirmationActions>
           </Confirmation>
         );
