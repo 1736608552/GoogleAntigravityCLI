@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   CheckCircle2,
   ChevronDown,
@@ -48,6 +49,7 @@ type ToolGroupContainerProps = {
   showThinking?: boolean;
   selectedProject?: Project | null;
   provider: LLMProvider | string;
+  showPetPerch?: boolean;
   /** True only when this exact group is the trailing active tool group of the current running turn. */
   isSessionProcessing?: boolean;
 };
@@ -393,6 +395,7 @@ function ToolGroupContainer({
   showRawParameters,
   selectedProject,
   isSessionProcessing,
+  showPetPerch = false,
 }: ToolGroupContainerProps) {
   const { t } = useTranslation('chat');
   const isExporting = useIsExportingTranscript();
@@ -452,7 +455,10 @@ function ToolGroupContainer({
       data-message-timestamp={group.timestamp || undefined}
     >
       {archivedSteps.length > 0 && (
-        <div className="rounded-2xl border border-slate-200/75 bg-white px-4 py-3 shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-200 dark:border-white/[0.08] dark:bg-zinc-900/85">
+        <div
+          data-pet-anchor="card"
+          className="relative rounded-2xl border border-slate-200/75 bg-white px-4 py-3 shadow-[0_2px_10px_rgba(15,23,42,0.03)] transition-all duration-200 dark:border-white/[0.08] dark:bg-zinc-900/85"
+        >
           <button
             type="button"
             className="flex w-full items-center justify-between gap-2 text-left"

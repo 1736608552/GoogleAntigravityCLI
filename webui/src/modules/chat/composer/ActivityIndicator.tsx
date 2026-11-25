@@ -115,6 +115,7 @@ export default function ActivityIndicator({ activity, onAbort, isInputFocused = 
         {renderedActivity.canInterrupt && onAbort && (
           <button
             type="button"
+            data-pet-anchor="stop"
             onClick={() => {
               setIsExiting(true);
               setTimeout(() => setRenderedActivity(null), 100);

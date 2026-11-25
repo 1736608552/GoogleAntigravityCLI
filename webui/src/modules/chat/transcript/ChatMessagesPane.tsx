@@ -354,6 +354,13 @@ function ChatMessagesPane({
                       onShowSettings={onShowSettings}
                       onGrantToolPermission={onGrantToolPermission}
                       showRawParameters={showRawParameters}
+                      showPetPerch={
+                        index ===
+                        groupedVisibleMessages.reduce(
+                          (lastIdx, entry, entryIdx) => (isToolGroupItem(entry) ? entryIdx : lastIdx),
+                          -1,
+                        )
+                      }
                       showThinking={showThinking}
                       selectedProject={selectedProject}
                       provider={provider}

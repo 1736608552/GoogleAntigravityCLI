@@ -349,7 +349,7 @@ export default function ChatComposer({
         onOpenChange={setIsTranslateDialogOpen}
       />
 
-      {!hasQuestionPanel && <div className="pointer-events-auto relative mx-auto max-w-[54.25rem]">
+      {!hasQuestionPanel && <div data-pet-anchor="input" className="pointer-events-auto relative mx-auto max-w-[54.25rem]">
         {showFileDropdown && filteredFiles.length > 0 && (
           <div
             ref={fileDropdownRef}

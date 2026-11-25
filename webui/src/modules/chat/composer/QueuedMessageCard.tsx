@@ -23,7 +23,10 @@ export default function QueuedMessageCard({
   const { t } = useTranslation('chat');
 
   return (
-    <div className="settings-content-enter mx-auto w-full max-w-[54.25rem] rounded-2xl border border-primary/20 bg-card/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md transition-all">
+    <div
+      data-pet-anchor="queue"
+      className="settings-content-enter mx-auto w-full max-w-[54.25rem] rounded-2xl border border-primary/20 bg-card/95 px-3.5 py-2.5 shadow-sm backdrop-blur-md transition-all"
+    >
       <div className="flex items-start gap-2.5">
         <span
           className="mt-1.5 h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary"

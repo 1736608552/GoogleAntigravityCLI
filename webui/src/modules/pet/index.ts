@@ -1,4 +1,5 @@
 export { HagemiOverlay } from './components/HagemiOverlay';
+export { PetCardPerch } from './components/PetCardPerch';
 export {
   useHagemiSettings,
   updateHagemiSettings,
