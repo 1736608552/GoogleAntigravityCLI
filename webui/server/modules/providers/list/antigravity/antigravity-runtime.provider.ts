@@ -1451,26 +1451,17 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       const silentMs = nowMs - lastActivityTime;   // 字节级静默（stdout/stderr 全无输出）
       const stalledMs = nowMs - lastProgressTime;  // 实质进展停滞（可能仍在反复吐重试警告）
       const inactivityTimeoutMs = (isBaseLongRunningMode || spawnedSubagentsCount > 0) ? 600_000 : 360_000;
+      // 工具执行中（bash 长命令 / 生图 / 装依赖等）不算停滞：CLI 正在本地干活，
+      // 本来就可能安静好几分钟。此时只有进程完全无字节输出（silentMs）才会兜底。
+      const toolInFlight = Boolean(lastActiveToolCall);
 
-      // 停滞预告：2 分钟无实质进展时向对话流推送一次提示（每回合最多一条），
-      // 让用户知道是上游卡住而非界面假死，可主动点「停止生成」。
-      if (!stallNoticeSent && !isSettled && stalledMs > 120_000) {
+      // 停滞预警只进服务端日志（不打扰对话流）
+      if (!stallNoticeSent && !isSettled && !toolInFlight && stalledMs > 120_000) {
         stallNoticeSent = true;
-        const stallSession = turnConversationId || currentSessionKey;
-        console.warn(`[Antigravity Runtime] ⏳ 已 ${Math.round(stalledMs / 1000)}s 无实质进展，向前端推送停滞提示`);
-        try {
-          ws.send(createNormalizedMessage({
-            id: `stall-notice-${stallSession}-${Date.now()}`,
-            kind: 'error',
-            role: 'assistant',
-            content: '⏳ 模型侧已超过 2 分钟没有实质进展（可能在上游等待或反复重试）。若持续无变化，可点击「停止生成」。',
-            sessionId: stallSession,
-            provider: 'antigravity',
-          }));
-        } catch (_) {}
+        console.warn(`[Antigravity Runtime] ⏳ 已 ${Math.round(stalledMs / 1000)}s 无实质进展（上游可能卡住）`);
       }
 
-      if (silentMs > inactivityTimeoutMs || stalledMs > inactivityTimeoutMs) {
+      if (!toolInFlight && (silentMs > inactivityTimeoutMs || stalledMs > inactivityTimeoutMs)) {
         if (watchdogTimer) {
           clearInterval(watchdogTimer);
           watchdogTimer = null;
