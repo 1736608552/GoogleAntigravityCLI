@@ -6,25 +6,14 @@ const execFileAsync = promisify(execFile);
 /**
  * 静态兜底反重力模型目录。
  * 仅在官方 Antigravity CLI 尚未生成缓存、发生网络超时或处于完全离线环境时作为保底使用。
- * 正常运行时的模型清单**一律以实时拉取结果为准**（见 fetchLiveAntigravityModels），本表不参与排序或默认值决策。
- * 聚合规则：Gemini 系列的各档位变体（-low/-medium/-high/-xhigh）在实时解析时会被收敛为单一基础模型，
- * 档位交给前端顶部「深度思考」菜单调控，不在模型列表中重复展示。
+ * 注意：Gemini 系列仅保留基础模型（如 Gemini 3.8 Flash），由前端顶部的深度思考档位（Effort）统一调控，绝不在模型列表中重复展示 -high/-medium/-low。
  */
 export const ANTIGRAVITY_FALLBACK_MODELS = {
     OPTIONS: [
         {
-            value: 'gemini-4-hydrogen',
-            label: 'Gemini 4 Hydrogen',
-            description: 'Google DeepMind 旗舰深度推理模型，支持顶部 Low/Medium/High 思考档位。',
-            effort: {
-                values: [{ value: 'low' }, { value: 'medium' }, { value: 'high' }, { value: 'xhigh' }],
-                default: 'high',
-            },
-        },
-        {
             value: 'gemini-3.8-flash',
             label: 'Gemini 3.8 Flash',
-            description: 'Google DeepMind 轻量快速模型，支持顶部 Low/Medium/High 思考档位。',
+            description: 'Google DeepMind 旗舰模型，支持深度多维推理 (调用顶部 Low/Medium/High 思考档位)。',
             effort: {
                 values: [{ value: 'low' }, { value: 'medium' }, { value: 'high' }],
                 default: 'high',
@@ -46,7 +35,7 @@ export const ANTIGRAVITY_FALLBACK_MODELS = {
             description: '开源高规格 120B 大语言模型，通过 Google Antigravity 原生调度。',
         },
     ],
-    DEFAULT: 'gemini-4-hydrogen',
+    DEFAULT: 'gemini-3.8-flash',
 };
 /** 保持历史导出兼容 */
 export const ANTIGRAVITY_PREDEFINED_MODELS = ANTIGRAVITY_FALLBACK_MODELS;
@@ -123,25 +112,32 @@ export function parseAntigravityModelsOutput(rawStdout) {
     }
     const options = [];
     // 2. 将聚合后的 Gemini 基础模型加入列表（排在最前面）
-    //    顺序完全沿用 CLI 返回顺序，不做任何人工重排：官方把最新旗舰放在最前。
     for (const [baseId, baseInfo] of geminiBases.entries()) {
         const effortValues = ['low', 'medium', 'high', 'xhigh', 'max'].filter((e) => baseInfo.efforts.has(e));
-        const effectiveEfforts = effortValues.length > 0 ? effortValues : ['low', 'medium', 'high'];
         options.push({
             value: baseId,
             label: baseInfo.baseLabel,
-            description: `Google DeepMind 官方反重力模型，支持顶部深度思考 (${effectiveEfforts
-                .map((v) => v.charAt(0).toUpperCase() + v.slice(1))
-                .join('/')}) 档位调控。`,
+            description: 'Google DeepMind 官方反重力模型，支持顶部深度思考 (Low/Medium/High) 档位调控。',
             effort: {
-                values: effectiveEfforts.map((v) => ({ value: v })),
-                default: effectiveEfforts.includes('high') ? 'high' : effectiveEfforts[effectiveEfforts.length - 1],
+                values: (effortValues.length > 0 ? effortValues : ['low', 'medium', 'high']).map((v) => ({
+                    value: v,
+                })),
+                default: 'high',
             },
         });
     }
-    // 注意：这里刻意不再「凭空插入一个硬编码 Gemini 模型」。
-    // 若实时列表里一个 Gemini 都没有（例如账号仅开通了三方模型），就如实展示三方模型，
-    // 由 pickPreferredDefaultModel 退化为取列表首项——绝不让界面出现实际不可调用的模型。
+    // 若未能识别出任何 Gemini 基础模型（防空容错），置入默认 gemini-3.8-flash
+    if (options.length === 0) {
+        options.push({
+            value: 'gemini-3.8-flash',
+            label: 'Gemini 3.8 Flash',
+            description: 'Google DeepMind 旗舰模型，支持深度多维推理 (调用顶部 Low/Medium/High 思考档位)。',
+            effort: {
+                values: [{ value: 'low' }, { value: 'medium' }, { value: 'high' }],
+                default: 'high',
+            },
+        });
+    }
     // 3. 将三方模型与独立模型加入列表
     for (const item of standaloneItems) {
         const { id, label } = item;
@@ -164,37 +160,13 @@ export function parseAntigravityModelsOutput(rawStdout) {
             effort: undefined, // 三方模型绝不配置 effort，防止 CLI 报错
         });
     }
-    // 默认模型：完全从「实时列表」推导，不再维护任何硬编码模型名清单。
-    // 历史问题：此处曾写死 'gemini-3.8-flash'，导致所有新会话静默跑在上一代轻量模型上，
-    // 用户主观感受就是「模型变笨」；而模型列表本身一直是实时的，所以写死 DEFAULT 才会与线上能力脱节。
-    const defaultModel = pickPreferredDefaultModel(options);
+    const defaultModel = options.find((o) => o.value === 'gemini-3.8-flash')?.value ||
+        options[0]?.value ||
+        'gemini-3.8-flash';
     return {
         OPTIONS: options,
         DEFAULT: defaultModel,
     };
-}
-/**
- * 默认模型的选取规则（不出现任何硬编码模型 ID，全部基于实时列表推导）：
- *
- * 1. 只看 Gemini 基础模型（带 effort 档位那一批）——官方把最新旗舰排在列表最前；
- * 2. 在其中优先选「支持的思考档位最多」的那个：档位数量是旗舰与轻量款的天然分界
- *    （旗舰含 xhigh/max，轻量款只有 low/medium/high），新模型上线后无需改代码即自动跟随；
- * 3. 档位数相同时取列表靠前者，保留官方推荐顺序；
- * 4. 完全没有 Gemini 模型时，退回列表首项（如纯三方账号）。
- */
-function pickPreferredDefaultModel(options) {
-    const geminiOptions = options.filter((o) => o.value.startsWith('gemini-'));
-    const pool = geminiOptions.length > 0 ? geminiOptions : options;
-    let best = pool[0];
-    let bestEffortCount = best?.effort?.values?.length ?? 0;
-    for (const candidate of pool) {
-        const count = candidate.effort?.values?.length ?? 0;
-        if (count > bestEffortCount) {
-            best = candidate;
-            bestEffortCount = count;
-        }
-    }
-    return best?.value ?? ANTIGRAVITY_FALLBACK_MODELS.DEFAULT;
 }
 /**
  * 实时调用反重力 CLI 获取当前账号支持的最新模型目录。
