@@ -165,15 +165,20 @@ export function getProxyStatus() {
     };
 }
 export function restartProxy() {
-    stopUrnSocksInstant();
+    stopUrnSocksInstant({ skipCloudCleanup: true });
     const toggle = getProxyToggle();
-    if (toggle === 'yes') {
-        startUrnSocksInstant();
+    if (toggle !== 'yes') {
+        return {
+            ok: false,
+            killed: 0,
+            message: '当前处于直连模式，请先切换为「🌐 代理」模式后再启动代理',
+        };
     }
+    const startRes = startUrnSocksInstant();
     return {
-        ok: true,
+        ok: startRes.ok,
         killed: 1,
-        message: '已优雅重启 SOCKS5 代理并重新同步最新配置',
+        message: startRes.message || '已优雅重启 SOCKS5 代理并重新同步最新配置',
     };
 }
 export function getProxyToggle() {
@@ -234,6 +239,25 @@ export function startUrnSocksInstant() {
                 return { ok: true, message: 'SOCKS5 代理已按需瞬间启动', socksListening: true };
             }
             execFileSync('sleep', ['0.15']);
+        }
+        // 若锁定单节点导致连接超时，自动回退到国家级智能选点重试，提高稳定性
+        if (urn.providerId) {
+            exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
+            const fallbackArgs = [
+                `--addr="127.0.0.1:19999"`,
+                `--user-auth="${urn.userAuth}"`,
+                `--password="${urn.password}"`,
+                `--country="${urn.country || 'United States'}"`,
+            ].join(' ');
+            exec(`nohup "${socksBin}" ${fallbackArgs} >> "${logFile}" 2>&1 &`);
+            const retryStart = Date.now();
+            while (Date.now() - retryStart < 3000) {
+                if (isSocksListening(19999)) {
+                    startProxyHealthWatchdog();
+                    return { ok: true, message: '已自动切换至同区优选节点并启动代理', socksListening: true };
+                }
+                execFileSync('sleep', ['0.15']);
+            }
         }
     }
     catch (err) {
@@ -300,7 +324,7 @@ export async function cleanupCloudSocksClients() {
         return 0;
     }
 }
-export function stopUrnSocksInstant() {
+export function stopUrnSocksInstant(options) {
     stopProxyHealthWatchdog();
     try {
         let pids = [];
@@ -345,8 +369,14 @@ export function stopUrnSocksInstant() {
                 catch (_) { }
             }
         }
-        // 4. 终极双保险：异步调用云端 API 确保所有 SOCKS5 挂起设备被 100% 连根拔除，绝不留任何残留
-        cleanupCloudSocksClients().catch(() => { });
+        // 4. 仅在非立即重启场景下，再延迟核查清理云端挂起设备（若期间已有新进程监听则绝不误删）
+        if (!options?.skipCloudCleanup) {
+            setTimeout(() => {
+                if (!isSocksListening(19999)) {
+                    cleanupCloudSocksClients().catch(() => { });
+                }
+            }, 1500);
+        }
     }
     catch (err) {
         console.warn('[Scale-to-Zero] 优雅停止代理异常:', err?.message);
@@ -582,8 +612,8 @@ export async function rotateNodeAndVerify(maxAttempts = 5) {
                 }
             }
             catch (_) { }
-            // 异步通知官方云端注销旧客户端会话（避免被分配到同一挂起设备）
-            cleanupCloudSocksClients().catch(() => { });
+            // 等待云端彻底注销旧设备后再启动新进程，防止异步竞态误杀新 clientID 触发 401
+            await cleanupCloudSocksClients().catch(() => { });
             // 等待 150ms 端口释放
             await new Promise((r) => setTimeout(r, 150));
             // 2. 重新拉起 SOCKS5 代理进程分配全新节点

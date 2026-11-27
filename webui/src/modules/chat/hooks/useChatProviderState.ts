@@ -21,7 +21,8 @@ const toProviderEffortOptions = (
 ): NonNullable<ProviderModelOption['effort']>['values'] => values.map((value) => ({ value }));
 
 const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
-  antigravity: 'gemini-3.8-flash',
+  // 默认走深度推理档，避免新会话静默落在最轻量的 flash 上
+  antigravity: 'gemini-4-hydrogen',
   claude: 'claude-3-7-sonnet-latest',
   cursor: 'claude-3.5-sonnet',
   codex: 'gpt-4o',

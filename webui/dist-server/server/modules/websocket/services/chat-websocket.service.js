@@ -120,13 +120,28 @@ function resolveSendTarget(ws, data, dependencies, frameName) {
  */
 async function dispatchRun(ws, userId, sessionId, session, data, dependencies, extraRuntimeOptions = {}, beforeRun) {
     const provider = session.provider;
-    const run = chatRunRegistry.startRun({
+    let run = chatRunRegistry.startRun({
         appSessionId: sessionId,
         provider,
         providerSessionId: session.provider_session_id,
         connection: ws,
         userId,
     });
+    // 若旧回合正在中止清理中（例如用户点击“立即发送”），短暂等待槽位释放后再启动新回合，避免误报 RUN_IN_PROGRESS
+    if (!run) {
+        for (let retry = 0; retry < 20; retry += 1) {
+            await new Promise((r) => setTimeout(r, 150));
+            run = chatRunRegistry.startRun({
+                appSessionId: sessionId,
+                provider,
+                providerSessionId: session.provider_session_id,
+                connection: ws,
+                userId,
+            });
+            if (run)
+                break;
+        }
+    }
     if (!run) {
         if (ws) {
             sendProtocolError(ws, 'RUN_IN_PROGRESS', `Session "${sessionId}" already has a run in progress.`, sessionId);

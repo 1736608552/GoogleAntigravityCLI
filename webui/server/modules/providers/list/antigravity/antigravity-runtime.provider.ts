@@ -276,6 +276,23 @@ export function resolveAntigravityPermissionPolicy(
   return '';
 }
 
+/** Antigravity CLI 认识的思考档位取值 */
+const ANTIGRAVITY_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+/** 模型 ID 尾部自带档位后缀的识别规则，如 gemini-4-hydrogen-high */
+const ANTIGRAVITY_EFFORT_SUFFIX_RE = /-(xhigh|high|medium|low|max)$/i;
+/** 前端未指定档位时采用的深度档 */
+const ANTIGRAVITY_DEFAULT_EFFORT = 'high';
+
+/**
+ * 解析「基础模型 + 思考档位」为 CLI 可直接接受的完整模型 ID。
+ *
+ * 关键事实（实测 CLI 1.5.17）：思考档位是**编码在模型 ID 里**的，CLI 内置档位变体形如
+ * gemini-4-hydrogen-high / gemini-3.8-flash-low / gemini-4-neon-xhigh / gemini-3.1-pro-low。
+ * 因此 `--model` 必须收到带档位后缀的完整 ID，而 `--effort` 会被 CLI 直接拒绝：
+ *   error: invalid model selection (--model "gemini-3.8-flash" --effort "high"):
+ *          --effort is not supported for model "gemini-3.8-flash"
+ * 本函数因此永不下发 --effort（resolvedEffort 恒为 undefined），只负责拼出完整模型 ID。
+ */
 function resolveAntigravityModelAndEffort(
   model?: string,
   effort?: string,
@@ -284,58 +301,60 @@ function resolveAntigravityModelAndEffort(
     return { resolvedModel: undefined, resolvedEffort: undefined };
   }
 
-  let resolvedModel = model.trim();
-  let resolvedEffort =
+  const inputModel = model.trim();
+
+  // 三方模型（claude-*、gpt-oss-* 等）的推理深度由 CLI 自行决定：不加档位后缀，也不传 --effort
+  if (!inputModel.startsWith('gemini-')) {
+    return { resolvedModel: inputModel, resolvedEffort: undefined };
+  }
+
+  // 已经是完整模型 ID（自带档位后缀），原样交给 CLI，避免二次拼接
+  if (ANTIGRAVITY_EFFORT_SUFFIX_RE.test(inputModel)) {
+    return { resolvedModel: inputModel, resolvedEffort: undefined };
+  }
+
+  const wantedEffort =
     effort && typeof effort === 'string' && effort.toLowerCase() !== 'default' && effort.trim() !== ''
       ? effort.toLowerCase().trim()
-      : undefined;
+      : '';
 
-  // 关键修复：仅针对 Google 原生 gemini-* 模型剥离历史/档位后缀（如 gemini-4-hydrogen-xhigh -> gemini-4-hydrogen）
-  // 严禁将三方模型 gpt-oss-120b-medium 截断为不存在的 gpt-oss-120b
-  if (resolvedModel.startsWith('gemini-')) {
-    const legacyMatch = resolvedModel.match(/^(.+)-(xhigh|high|medium|low|max)$/i);
-    if (legacyMatch) {
-      resolvedModel = legacyMatch[1];
-      if (!resolvedEffort) {
-        resolvedEffort = legacyMatch[2].toLowerCase();
-      }
-    }
+  // 前端未指定档位时不要凭空拼后缀：直接下发基础模型 ID，让 CLI 用自己对该模型的默认深度。
+  // 这样即使某模型缺少 -high 变体也不会被拼成非法 ID。
+  if (!wantedEffort) {
+    return { resolvedModel: inputModel, resolvedEffort: undefined };
   }
 
-  // Antigravity CLI 规范：仅原生 gemini-* 模型支持并强制要求 --effort 参数 (low/medium/high/xhigh/max)
-  // 严禁向所有三方模型（claude-opus-4-6-thinking、claude-sonnet-4-6、gpt-oss-120b-medium 等）传递 --effort，否则 CLI 立即报错拒绝启动
-  const supportsEffort = resolvedModel.startsWith('gemini-');
-  if (supportsEffort) {
-    // 关键修复：Antigravity CLI 对所有 gemini-* 模型强制要求 --effort (low/medium/high/xhigh/max)
-    // 如果前端未指定或传入了 'default' / 空值，默认设定为 'high' (深度思考)
-    if (!resolvedEffort || !['low', 'medium', 'high', 'xhigh', 'max'].includes(resolvedEffort)) {
-      resolvedEffort = 'high';
-    }
-    // gemini-3.1-pro 仅支持 high 和 low
-    if (resolvedModel === 'gemini-3.1-pro' && resolvedEffort === 'medium') {
-      resolvedEffort = 'high';
-    }
-  } else {
-    resolvedEffort = undefined;
+  let level: string = (ANTIGRAVITY_EFFORT_LEVELS as readonly string[]).includes(wantedEffort)
+    ? wantedEffort
+    : ANTIGRAVITY_DEFAULT_EFFORT;
+
+  // gemini-3.1-pro 仅提供 low / high 两档，其余档位统一收敛到 high
+  if (inputModel === 'gemini-3.1-pro' && level !== 'low') {
+    level = 'high';
   }
 
-  return { resolvedModel, resolvedEffort };
+  return { resolvedModel: `${inputModel}-${level}`, resolvedEffort: undefined };
 }
 
-const CHINESE_LANGUAGE_RULE_CONTENT = `# Antigravity 全局语言与思维规范 (Global Language & Reasoning Guidelines)
+/**
+ * 写入 GEMINI.md / AGENTS.md 的语言偏好规则。
+ *
+ * 历史版本在这里强制「必须全程中文思考、严禁英文思考」。实测这对模型是净损失：
+ * 推理语言被锁死会显著拉低复杂逻辑与代码任务的准确率，而这些规则文件每轮都会被加载。
+ * 因此只保留输出语言偏好，不再干预模型的内部推理语言。
+ */
+const CHINESE_LANGUAGE_RULE_CONTENT = `# Antigravity 语言偏好 (Language Preference)
 
-无论在任何场景、处理何种任务或项目，必须严格执行以下准则：
-
-## 1. 深度思考过程 (Thinking Process / Chain-of-Thought)
-- **必须全程使用中文思考**：模型内部的所有思维推理过程（包括 <thinking> 内部的逻辑分析、推导演进、工具调用规划、风险研判与反思），**一律且必须使用中文**。
-- **严禁英文思考**：除代码标识符、系统指令、函数名称或错误原文字符串外，禁止在思考过程中使用英文组织语言。
-
-## 2. 回复与交互 (Output & Responses)
-- **始终使用中文回复用户**：所有对用户的解释、总结、方案陈述、执行汇报均使用规范、流畅、通俗易懂的中文。
-- **工具调用摘要**：所有工具调用的 toolAction 与 toolSummary 尽可能使用规范中文表达。
-- **技术名词规范**：常见行业标准词汇（如 Git, Docker, API, JSON, SOCKS5, Token 等）可保留英文原词，其余文本一律使用中文。
+- 所有面向用户的回复使用简体中文；代码、命令、标识符、报错原文保持原样。
+- 内部推理语言不作限制，以推理准确性优先。
 `;
 
+/**
+ * 【已停用】历史遗留：曾把这段「强制中文推理」声明拼在**用户消息体**前面下发，
+ * 会稀释真实需求、抢占模型注意力（实测可显著拉低复杂任务表现）。
+ * 中文输出要求统一由 GEMINI.md / AGENTS.md 全局规则承载，不再污染每轮 prompt。
+ * 仅保留导出以兼容可能存在的历史引用。
+ */
 export const CHINESE_ENFORCEMENT_PREFIX = '【系统要求：本轮交互所有思维推理(<thinking>)与任务执行分析必须全程100%使用中文撰写，严禁使用任何英文组织思路】\n\n';
 
 
@@ -366,7 +385,7 @@ export function ensureChineseRules(workingDir?: string) {
         } else {
           try {
             const content = fs.readFileSync(filePath, 'utf8');
-            if (!content.includes('必须全程使用中文思考') && !content.includes('必须 100% 始终使用中文')) {
+            if (!content.includes('Antigravity 语言偏好')) {
               fs.appendFileSync(filePath, '\n\n' + CHINESE_LANGUAGE_RULE_CONTENT, 'utf8');
             }
           } catch (_) {}
@@ -421,18 +440,8 @@ class QuotaExhaustedError extends Error {
   }
 }
 
-const CHINESE_RULES_CONTENT = `# Antigravity 全局语言与思维规范 (Global Language & Reasoning Guidelines)
-
-无论在任何场景、处理何种任务或项目，必须严格执行以下准则：
-
-## 1. 深度思考过程 (Thinking Process / Chain-of-Thought)
-- **必须全程使用中文思考**：模型内部的所有思维推理过程（包括 <thinking> 内部的逻辑分析、推导演进、工具调用规划、风险研判与反思），**一律且必须使用中文**。
-- **严禁英文思考**：除代码标识符、系统指令、函数名称或错误原文字符串外，禁止在思考过程中使用英文组织语言。
-
-## 2. 回复与交互 (Output & Responses)
-- **始终使用中文回复用户**：所有对用户的解释、总结、方案陈述、执行汇报均使用规范、流畅、通俗易懂的中文。
-- **技术名词规范**：常见行业标准词汇（如 Git, Docker, API, JSON, SOCKS5, Token 等）可保留英文原词，其余文本一律使用中文。
-`;
+/** 与 CHINESE_LANGUAGE_RULE_CONTENT 同源，仅供 ensureAntigravityGlobalRules 复用，避免两份漂移 */
+const CHINESE_RULES_CONTENT = CHINESE_LANGUAGE_RULE_CONTENT;
 
 function ensureAntigravityGlobalRules(workingDir?: string): void {
   try {
@@ -458,7 +467,7 @@ function ensureAntigravityGlobalRules(workingDir?: string): void {
           fs.writeFileSync(ruleFile, CHINESE_RULES_CONTENT, 'utf8');
         } else {
           const content = fs.readFileSync(ruleFile, 'utf8');
-          if (!content.includes('必须全程使用中文思考')) {
+          if (!content.includes('Antigravity 语言偏好')) {
             fs.appendFileSync(ruleFile, '\n\n' + CHINESE_RULES_CONTENT, 'utf8');
           }
         }
@@ -734,8 +743,13 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       baseArgs.push('--model', resolvedModel);
     }
 
-    if (resolvedEffort && ['low', 'medium', 'high', 'xhigh', 'max'].includes(resolvedEffort)) {
-      baseArgs.push('--effort', resolvedEffort);
+    // 刻意不再下发 --effort：CLI 1.5.17 的思考档位编码在模型 ID 里（gemini-4-hydrogen-high 之类），
+    // 单独传 --effort 会被拒绝启动（error: --effort is not supported for model "..."）。
+    // 档位已由 resolveAntigravityModelAndEffort 拼接进 --model，此处保留空实现以防历史调用点引用。
+    if (resolvedEffort && ANTIGRAVITY_EFFORT_LEVELS.includes(resolvedEffort as any)) {
+      console.warn(
+        `[Antigravity Runtime] 忽略 --effort=${resolvedEffort}：CLI 已改为从模型 ID 读取档位，避免拒绝启动`,
+      );
     }
 
     if (capturedSessionId) {
@@ -759,25 +773,23 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
     const hasPermissionPolicy = prompt.includes('【🔒 权限策略：') || prompt.includes('【🛡️ 权限策略：');
     const policyBlock = permissionPolicy && !hasPermissionPolicy ? `${permissionPolicy}\n\n` : '';
 
-    if (prompt && !prompt.includes(CHINESE_ENFORCEMENT_PREFIX)) {
+    if (prompt) {
       if (isBoostCommand) {
         if (prompt.startsWith('/')) {
           const firstLineEnd = prompt.indexOf('\n');
           if (firstLineEnd !== -1) {
             const firstLine = prompt.slice(0, firstLineEnd);
             const rest = prompt.slice(firstLineEnd + 1);
-            prompt = `${firstLine}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${rest}`;
+            prompt = `${firstLine}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${rest}`;
           } else {
-            prompt = `${prompt}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}`;
+            prompt = `${prompt}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}`;
           }
         } else {
-          prompt = `${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${prompt}`;
+          prompt = `${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${prompt}`;
         }
-      } else {
-        prompt = `${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${prompt}`;
+      } else if (policyBlock) {
+        prompt = `${policyBlock}${prompt}`;
       }
-    } else if (prompt && policyBlock) {
-      prompt = `${policyBlock}${prompt}`;
     }
     const hasAttachments =
       normalizeAttachmentDescriptors(images).length > 0 ||
@@ -1752,6 +1764,14 @@ export async function spawnAntigravity(
           console.warn(`[Antigravity Runtime] 瞬态网络握手轻微波动 (尝试 ${attempt}/3): ${errMsg.slice(0, 100)}，等待 2 秒重试...`);
           await new Promise((r) => setTimeout(r, 2000));
           continue;
+        }
+
+        // 模型/档位组合被 CLI 拒绝：转成可操作的中文提示，而不是把原始 stderr 甩给用户
+        if (/invalid model selection|--effort is not supported|is not supported for model/i.test(errMsg)) {
+          throw new Error(
+            `⚠️ 当前「模型 + 思考档位」组合不被 Antigravity CLI 接受（模型：${model || '未指定'}，档位：${effort || '默认'}）。` +
+              `请在上方模型菜单更换模型或档位后重试。原始错误：${errMsg}`,
+          );
         }
 
         // Non-retryable error

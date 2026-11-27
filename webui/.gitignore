@@ -135,7 +135,11 @@ tasks.json
 tasks/ 
 
 # Translations
+# tasks.json 是任务面板的 i18n 词条，被上面的 `tasks.json` 规则全局误伤。
+# 反忽略路径原本写成 src/i18n/locales/*，与实际目录 src/modules/i18n/locales/* 不一致，
+# 导致 12 个语言文件从未入库，任何人 clone 后 `npm run build` 都会因 TS2307 直接失败。
 !src/i18n/locales/*/tasks.json
+!src/modules/i18n/locales/*/tasks.json
 
 # Git worktrees
 .worktrees/
