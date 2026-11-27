@@ -391,6 +391,8 @@ export const api = {
     rotateAntigravityProxyNode: () => post('/api/providers/antigravity/proxy/rotate'),
     sleepAntigravityProxy: () => post('/api/providers/antigravity/proxy/sleep'),
     wakeAntigravityProxy: () => post('/api/providers/antigravity/proxy/wake'),
+    // 用户开始打字时提前唤醒按需代理，把冷启动藏进输入时间；幂等
+    prewarmAntigravityProxy: () => post('/api/providers/antigravity/proxy/prewarm'),
     getAntigravityProxySettings: () => get('/api/providers/antigravity/proxy/settings'),
     saveAntigravityProxySettings: (data: any) => post('/api/providers/antigravity/proxy/settings', data),
     testAntigravityProxy: (mode?: string) => post('/api/providers/antigravity/proxy-test', { mode }),

@@ -580,6 +580,13 @@ router.post('/antigravity/proxy/wake', asyncHandler(async (_req, res) => {
     const result = await wakeProxyNow();
     res.json(createApiSuccessResponse(result));
 }));
+// 预热：用户开始打字时由前端调用，提前把代理拉起来，把冷启动藏进输入时间。
+// 幂等且可被高频调用——代理已在运行时只做状态判断，不产生额外流量。
+router.post('/antigravity/proxy/prewarm', asyncHandler(async (_req, res) => {
+    const { prewarmProxy } = await import('./list/antigravity/antigravity-proxy.js');
+    const result = await prewarmProxy();
+    res.json(createApiSuccessResponse(result));
+}));
 router.get('/antigravity/proxy/settings', asyncHandler(async (_req, res) => {
     const { readUrnAuth, getProxyToggle } = await import('./list/antigravity/antigravity-proxy.js');
     const urn = readUrnAuth();

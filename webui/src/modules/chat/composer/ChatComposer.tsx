@@ -14,6 +14,7 @@ import { PaperclipIcon, Loader2, ArrowUpIcon, PencilIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
+import { useProxyPrewarm } from '@/modules/chat/hooks/useProxyPrewarm';
 import type { BackgroundSendChoice, BackgroundSendPrompt, QueuedDraft, ScheduledMessage, SlashCommand,SessionActivity,PendingPermissionRequest,PermissionMode,ProviderModelOption } from '@/shared/types';
 import {
   PromptInput,
@@ -119,6 +120,8 @@ type ChatComposerProps = {
   placeholder: string;
   isTextareaExpanded: boolean;
   sendByCtrlEnter?: boolean;
+  /** 当前 provider 走按需代理时置 true：用户开始打字就提前预热代理 */
+  prewarmProxy?: boolean;
 };
 
 /**
@@ -195,8 +198,11 @@ export default function ChatComposer({
   placeholder,
   isTextareaExpanded,
   sendByCtrlEnter,
+  prewarmProxy = false,
 }: ChatComposerProps) {
   const { t } = useTranslation('chat');
+  // 与业务事件处理器叠加而不是替换：预热只负责「提前拉起代理」，不改变任何输入行为
+  const proxyPrewarm = useProxyPrewarm(prewarmProxy);
   const fileDropdownRef = useRef<HTMLDivElement | null>(null);
   const selectedFileRef = useRef<HTMLDivElement | null>(null);
   const [isTranslateDialogOpen, setIsTranslateDialogOpen] = useState(false);
@@ -445,10 +451,19 @@ export default function ChatComposer({
               value={input}
               onChange={onInputChange}
               onClick={onTextareaClick}
-              onKeyDown={onTextareaKeyDown}
-              onPaste={onTextareaPaste}
+              onKeyDown={(event) => {
+                proxyPrewarm.onKeyDown(event);
+                onTextareaKeyDown(event);
+              }}
+              onPaste={(event) => {
+                proxyPrewarm.onPaste();
+                onTextareaPaste(event);
+              }}
               onScroll={(event) => onTextareaScrollSync(event.target as HTMLTextAreaElement)}
-              onFocus={() => onInputFocusChange?.(true)}
+              onFocus={() => {
+                proxyPrewarm.onFocus();
+                onInputFocusChange?.(true);
+              }}
               onBlur={() => onInputFocusChange?.(false)}
               onInput={onTextareaInput}
               placeholder={placeholder}
