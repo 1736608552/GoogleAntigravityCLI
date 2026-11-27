@@ -170,6 +170,14 @@ export function useChatRealtimeHandlers({
               kind: 'error',
               content: String(msg.error || 'Request failed'),
             } as NormalizedMessage);
+            // Rejected runs (RUN_IN_PROGRESS / ANCHOR_NOT_FOUND / ...) never
+            // send a `complete`, yet the server already broadcast
+            // `history_truncated` before dispatch — the client-side
+            // truncation would otherwise leave the conversation blank with
+            // no recovery. Re-pull the persisted transcript to restore it.
+            if (sid === activeViewSessionId) {
+              void requestLatestMessages(sid, isActiveRef.current);
+            }
           }
           return;
         }

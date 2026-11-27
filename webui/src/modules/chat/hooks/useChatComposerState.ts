@@ -48,7 +48,7 @@ type UseChatComposerStateArgs = {
   processingSessions?: SessionActivityMap;
   canAbortSession: boolean;
   tokenBudget: Record<string, unknown> | null;
-  sendMessage: (message: unknown) => void;
+  sendMessage: (message: unknown) => boolean;
   sendByCtrlEnter?: boolean;
   onSessionProcessing?: MarkSessionProcessing;
   onSessionIdle?: MarkSessionIdle;
@@ -980,7 +980,7 @@ export function useChatComposerState({
       // One message shape for every provider. The backend resolves the
       // provider, project path, and provider-native resume id from the
       // session row; `options` only carries composer-level preferences.
-      sendMessage({
+      const delivered = sendMessage({
         // Replacing an already-sent message is its own frame: it changes the
         // shape of the conversation, so it gets validated separately and can
         // report why it was refused.
@@ -994,6 +994,18 @@ export function useChatComposerState({
         },
       });
       setEditingAnchorId(null);
+
+      if (!delivered) {
+        // WebSocket 未连接（网络超时/重连窗口）：帧被静默丢弃。明确反馈并
+        // 回滚处理态，输入内容与附件保留在输入框，连接恢复后可直接重发。
+        addMessage({
+          type: 'error',
+          content: '⚠️ 网络连接已断开，消息未能发出。内容已保留在输入框，连接恢复后请重新点击发送。',
+          timestamp: new Date(),
+        } as ChatMessage);
+        onSessionIdle?.(targetSessionId);
+        return;
+      }
 
       // Recorded under the (possibly just-allocated) session id, so the first
       // message of a new chat lands in the history of the session the user is
@@ -1025,6 +1037,7 @@ export function useChatComposerState({
       executeCommand,
       isLoading,
       onSessionProcessing,
+      onSessionIdle,
       onSessionEstablished,
       provider,
       queueMessage,

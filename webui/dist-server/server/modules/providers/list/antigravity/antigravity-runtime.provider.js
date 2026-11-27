@@ -872,6 +872,23 @@ export function runAntigravityTurnOnce(params) {
             if (obj.event === 'error' || (obj.error && obj.event !== 'result')) {
                 const errText = String(obj.error || obj.message || 'Antigravity error');
                 lastStderrError = errText;
+                // 转发到前端（同文本 30 秒去重），让用户看到卡住的原因而不是无限干等
+                const nowTs = Date.now();
+                if (errText && (errText !== lastForwardedErrorText || nowTs - lastForwardedErrorTime > 30_000)) {
+                    lastForwardedErrorText = errText;
+                    lastForwardedErrorTime = nowTs;
+                    try {
+                        ws.send(createNormalizedMessage({
+                            id: `cli-error-${activeSession}-${nowTs}`,
+                            kind: 'error',
+                            role: 'assistant',
+                            content: `⚠️ CLI 上游错误: ${errText}`,
+                            sessionId: activeSession,
+                            provider: 'antigravity',
+                        }));
+                    }
+                    catch (_) { }
+                }
                 return;
             }
             // Handle 'init' event
@@ -972,6 +989,23 @@ export function runAntigravityTurnOnce(params) {
                     || update.tool_name
                     || update.toolName
                     || '').trim();
+                // 实质进展标记：思考 / 正文 / 工具任一有效载荷都刷新停滞时钟。
+                // error / retry 类步骤不算 —— 上游挂死时 CLI 会反复吐重试警告事件，
+                // 若这些也算进展，看门狗会被无限续命（表现为「超时一直干等」）。
+                if (!stepType.includes('error')) {
+                    const hasSubstantivePayload = Boolean(update.text_delta ||
+                        (typeof update.content === 'string' && update.content) ||
+                        (typeof fullThought === 'string' && fullThought) ||
+                        thoughtDelta ||
+                        toolInfo ||
+                        (Array.isArray(inlineToolCalls) && inlineToolCalls.length > 0) ||
+                        singleToolName ||
+                        update.tool_result ||
+                        update.toolResult);
+                    if (hasSubstantivePayload) {
+                        lastProgressTime = Date.now();
+                    }
+                }
                 const toolCallList = [];
                 if (singleToolName) {
                     toolCallList.push({
@@ -1110,8 +1144,29 @@ export function runAntigravityTurnOnce(params) {
                     lastActiveToolCall = null;
                     return;
                 }
-                // Non-tool error steps (transient retry warnings, etc.) — do not stream as user messages
+                // Non-tool error steps (transient retry warnings, etc.) — do not stream as user messages.
+                // 但要转发为独立的错误提示行（同文本 30 秒去重）：上游卡住/反复重试时
+                // 用户需要看到原因，而不是看着转圈无限干等。
                 if (stepType === 'error_message' || stepType === 'error') {
+                    const forwardText = String(update.content || update.error || errText || '').trim();
+                    if (forwardText) {
+                        const nowTs = Date.now();
+                        if (forwardText !== lastForwardedErrorText || nowTs - lastForwardedErrorTime > 30_000) {
+                            lastForwardedErrorText = forwardText;
+                            lastForwardedErrorTime = nowTs;
+                            try {
+                                ws.send(createNormalizedMessage({
+                                    id: `cli-error-${activeSession}-${nowTs}`,
+                                    kind: 'error',
+                                    role: 'assistant',
+                                    content: `⚠️ 模型侧暂态错误（自动重试中）: ${forwardText}`,
+                                    sessionId: activeSession,
+                                    provider: 'antigravity',
+                                }));
+                            }
+                            catch (_) { }
+                        }
+                    }
                     return;
                 }
                 // Text delta streaming with delta deduplication
@@ -1166,6 +1221,7 @@ export function runAntigravityTurnOnce(params) {
             // Handle 'result' or 'done' event
             if (obj.event === 'result' || obj.event === 'done') {
                 const resObj = obj.result || obj;
+                lastProgressTime = Date.now();
                 const convId = resObj.conversation_id;
                 if (convId) {
                     turnConversationId = convId;
@@ -1207,6 +1263,13 @@ export function runAntigravityTurnOnce(params) {
         }
         // 动态看门狗超时：Boost、深度思考或已派发子代理的长程模式下放宽到 600 秒（10分钟），普通对话放宽到 360 秒（6分钟）
         let lastActivityTime = Date.now();
+        // 实质进展时间：仅由思考/正文/工具调用/result 等有效载荷刷新。
+        // 诊断日志、重试警告、stderr 噪声不算进展 —— 否则上游挂死但 CLI 持续吐
+        // 重试警告时看门狗会被无限续命（正是「超时一直干等」的根因）。
+        let lastProgressTime = Date.now();
+        let stallNoticeSent = false;
+        let lastForwardedErrorText = '';
+        let lastForwardedErrorTime = 0;
         const isBoostMode = Boolean((command && /^\/boost\b/i.test(command.trim())) ||
             (command && /\[🚀.*Boost/i.test(command)));
         const isBaseLongRunningMode = Boolean(isBoostMode ||
@@ -1222,9 +1285,29 @@ export function runAntigravityTurnOnce(params) {
                 }
                 return;
             }
-            const idleMs = Date.now() - lastActivityTime;
+            const nowMs = Date.now();
+            const silentMs = nowMs - lastActivityTime; // 字节级静默（stdout/stderr 全无输出）
+            const stalledMs = nowMs - lastProgressTime; // 实质进展停滞（可能仍在反复吐重试警告）
             const inactivityTimeoutMs = (isBaseLongRunningMode || spawnedSubagentsCount > 0) ? 600_000 : 360_000;
-            if (idleMs > inactivityTimeoutMs) {
+            // 停滞预告：2 分钟无实质进展时向对话流推送一次提示（每回合最多一条），
+            // 让用户知道是上游卡住而非界面假死，可主动点「停止生成」。
+            if (!stallNoticeSent && !isSettled && stalledMs > 120_000) {
+                stallNoticeSent = true;
+                const stallSession = turnConversationId || currentSessionKey;
+                console.warn(`[Antigravity Runtime] ⏳ 已 ${Math.round(stalledMs / 1000)}s 无实质进展，向前端推送停滞提示`);
+                try {
+                    ws.send(createNormalizedMessage({
+                        id: `stall-notice-${stallSession}-${Date.now()}`,
+                        kind: 'error',
+                        role: 'assistant',
+                        content: '⏳ 模型侧已超过 2 分钟没有实质进展（可能在上游等待或反复重试）。若持续无变化，可点击「停止生成」。',
+                        sessionId: stallSession,
+                        provider: 'antigravity',
+                    }));
+                }
+                catch (_) { }
+            }
+            if (silentMs > inactivityTimeoutMs || stalledMs > inactivityTimeoutMs) {
                 if (watchdogTimer) {
                     clearInterval(watchdogTimer);
                     watchdogTimer = null;
@@ -1237,8 +1320,8 @@ export function runAntigravityTurnOnce(params) {
                     terminateAntigravityProcess(antigravityProcess);
                     return;
                 }
-                console.warn(`[Antigravity Runtime] 🚨 活跃看门狗触发: 连续 ${Math.round(idleMs / 1000)} 秒无输出且未生成任何内容，终止底层进程...`);
-                lastStderrError = `stream timed out: no output produced after ${Math.round(inactivityTimeoutMs / 1000)}s`;
+                console.warn(`[Antigravity Runtime] 🚨 活跃看门狗触发: 连续 ${Math.round(Math.max(silentMs, stalledMs) / 1000)} 秒无实质进展且未生成任何内容，终止底层进程...`);
+                lastStderrError = `stream timed out: no substantive output after ${Math.round(inactivityTimeoutMs / 1000)}s`;
                 if (getProxyToggle() === 'yes') {
                     try {
                         exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
