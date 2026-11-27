@@ -3,6 +3,10 @@ import net from 'node:net';
 import path from 'node:path';
 import tls from 'node:tls';
 import { exec, execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+const sleepAsync = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const PROXY_TOGGLE_PATHS = [
   path.join(process.cwd(), 'proxy-toggle.txt'),
@@ -213,12 +217,12 @@ let lastSleepAt = 0;
 let prewarmTimer: NodeJS.Timeout | null = null;
 let readyWaiter: Promise<ReadyProbe> | null = null;
 
-export function getProxyStatus(): UrnProxyStatus {
+export async function getProxyStatus(): Promise<UrnProxyStatus> {
   const urn = readUrnAuth();
   const proxyToggle = getProxyToggle();
   let socksListening = false;
   try {
-    const r = execFileSync('ss', ['-tln', 'sport = :19999'], { encoding: 'utf8' });
+    const { stdout: r } = await execFileAsync('ss', ['-tln', 'sport = :19999']);
     socksListening = r.includes(':19999 ');
   } catch (_) {}
 
@@ -234,7 +238,7 @@ export function getProxyStatus(): UrnProxyStatus {
       ];
       for (const lp of logPaths) {
         if (fs.existsSync(lp)) {
-          const out = execFileSync('grep', ['-a', 'country matched', lp], { encoding: 'utf8' });
+          const { stdout: out } = await execFileAsync('grep', ['-a', 'country matched', lp]);
           const lines = out.trim().split('\n').filter(Boolean);
           if (lines.length > 0) {
             const last = lines[lines.length - 1];
@@ -287,8 +291,8 @@ export function getProxyStatus(): UrnProxyStatus {
   };
 }
 
-export function restartProxy(): { ok: boolean; killed: number; message: string } {
-  stopUrnSocksInstant({ skipCloudCleanup: true });
+export async function restartProxy(): Promise<{ ok: boolean; killed: number; message: string }> {
+  await stopUrnSocksInstant({ skipCloudCleanup: true });
   const toggle = getProxyToggle();
   if (toggle !== 'yes') {
     return {
@@ -297,7 +301,7 @@ export function restartProxy(): { ok: boolean; killed: number; message: string }
       message: '当前处于直连模式，请先切换为「🌐 代理」模式后再启动代理',
     };
   }
-  const startRes = startUrnSocksInstant();
+  const startRes = await startUrnSocksInstant();
   return {
     ok: startRes.ok,
     killed: 1,
@@ -321,6 +325,17 @@ export function isSocksListening(port = 19999): boolean {
   try {
     const r = execFileSync('ss', ['-tln', `sport = :${port}`], { encoding: 'utf8' });
     return r.includes(`:${port} `);
+  } catch (_) {
+    return false;
+  }
+}
+
+// 异步版端口探测：execFileSync 每次 fork 都阻塞事件循环（HTTP/WS 全部卡住），
+// 在 async 流程里一律用这个版本，绝不碰同步版。
+export async function isSocksListeningAsync(port = 19999): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('ss', ['-tln', `sport = :${port}`]);
+    return stdout.includes(`:${port} `);
   } catch (_) {
     return false;
   }
@@ -359,13 +374,13 @@ function spawnUrnSocks(urn: UrnAuthConfig, options?: { countryOnly?: boolean }):
   exec(`nohup "${URN_SOCKS_BIN}" ${args} >> "${URN_SOCKS_LOG}" 2>&1 &`, { env });
 }
 
-export function startUrnSocksInstant(): { ok: boolean; message: string; socksListening: boolean } {
+export async function startUrnSocksInstant(): Promise<{ ok: boolean; message: string; socksListening: boolean }> {
   const toggle = getProxyToggle();
   if (toggle === 'no') {
     return { ok: false, message: '当前设置处于直连状态，严禁拉起代理', socksListening: false };
   }
 
-  if (isSocksListening(19999)) {
+  if (await isSocksListeningAsync(19999)) {
     startProxyHealthWatchdog();
     return { ok: true, message: 'SOCKS5 代理已在运行中', socksListening: true };
   }
@@ -382,14 +397,14 @@ export function startUrnSocksInstant(): { ok: boolean; message: string; socksLis
   try {
     spawnUrnSocks(urn);
 
-    // 毫秒级轮询等待端口就绪（最多等待 3 秒）
+    // 毫秒级轮询等待端口就绪（最多等待 3 秒）——异步等待，绝不阻塞事件循环
     const start = Date.now();
     while (Date.now() - start < 3000) {
-      if (isSocksListening(19999)) {
+      if (await isSocksListeningAsync(19999)) {
         startProxyHealthWatchdog();
         return { ok: true, message: 'SOCKS5 代理已按需瞬间启动', socksListening: true };
       }
-      execFileSync('sleep', ['0.15']);
+      await sleepAsync(150);
     }
 
     // 若锁定单节点导致连接超时，自动回退到国家级智能选点重试，提高稳定性
@@ -398,18 +413,18 @@ export function startUrnSocksInstant(): { ok: boolean; message: string; socksLis
       spawnUrnSocks(urn, { countryOnly: true });
       const retryStart = Date.now();
       while (Date.now() - retryStart < 3000) {
-        if (isSocksListening(19999)) {
+        if (await isSocksListeningAsync(19999)) {
           startProxyHealthWatchdog();
           return { ok: true, message: '已自动切换至同区优选节点并启动代理', socksListening: true };
         }
-        execFileSync('sleep', ['0.15']);
+        await sleepAsync(150);
       }
     }
   } catch (err: any) {
     return { ok: false, message: '启动代理异常: ' + (err?.message || '未知错误'), socksListening: false };
   }
 
-  const listening = isSocksListening(19999);
+  const listening = await isSocksListeningAsync(19999);
   if (listening) {
     startProxyHealthWatchdog();
   }
@@ -502,7 +517,7 @@ export async function waitSocksReady(
   timeoutMs: number = READY_PROBE_TIMEOUT_MS,
   socksPort: number = 19999,
 ): Promise<ReadyProbe> {
-  if (!isSocksListening(socksPort)) return { ok: false, ms: 0, reason: '端口未监听' };
+  if (!(await isSocksListeningAsync(socksPort))) return { ok: false, ms: 0, reason: '端口未监听' };
   if (readyWaiter) return readyWaiter;
   readyWaiter = probeSocksTlsOnce(READY_PROBE_HOST, 443, timeoutMs, socksPort).finally(() => {
     readyWaiter = null;
@@ -530,7 +545,7 @@ function armPrewarmExpiry(): void {
     prewarmTimer = null;
     if (activeTurnsCount === 0) {
       console.log(`[Scale-to-Zero] 🌿 预热后 ${PREWARM_HOLD_MS / 1000} 秒内未发起对话，代理自动休眠`);
-      sleepProxyNow();
+      void sleepProxyNow();
     }
   }, PREWARM_HOLD_MS);
 }
@@ -606,13 +621,13 @@ export async function cleanupCloudSocksClients(): Promise<number> {
   }
 }
 
-export function stopUrnSocksInstant(options?: { skipCloudCleanup?: boolean }): { ok: boolean; message: string; socksListening: boolean } {
+export async function stopUrnSocksInstant(options?: { skipCloudCleanup?: boolean }): Promise<{ ok: boolean; message: string; socksListening: boolean }> {
   stopProxyHealthWatchdog();
   try {
     let pids: number[] = [];
     try {
-      const out = execFileSync('pgrep', ['-f', 'urnetwork/urnetwork-socks'], { encoding: 'utf8' });
-      pids = out.trim().split('\n').filter(Boolean).map(Number);
+      const out = await execFileAsync('pgrep', ['-f', 'urnetwork/urnetwork-socks']);
+      pids = out.stdout.trim().split('\n').filter(Boolean).map(Number);
     } catch (_) {}
 
     if (pids.length > 0) {
@@ -625,6 +640,8 @@ export function stopUrnSocksInstant(options?: { skipCloudCleanup?: boolean }): {
       }
 
       // 2. 轮询等待进程正常退出并完成向云端退网交割（实测需要 1.5~2.5 秒，最多等待 4 秒）
+      //    异步等待：execFileSync('sleep') 每 0.2s fork 一次会卡死事件循环 4 秒以上，
+      //    表现为切换代理模式时 webui 整站无响应。
       const deadline = Date.now() + 4000;
       while (Date.now() < deadline) {
         let anyAlive = false;
@@ -635,11 +652,11 @@ export function stopUrnSocksInstant(options?: { skipCloudCleanup?: boolean }): {
             break;
           } catch (_) {}
         }
-        if (!anyAlive && !isSocksListening(19999)) {
+        if (!anyAlive && !(await isSocksListeningAsync(19999))) {
           console.log('[Scale-to-Zero] ✅ SOCKS5 代理已正常优雅退出，已成功向平台退还合约与质押流量');
           break;
         }
-        execFileSync('sleep', ['0.2']);
+        await sleepAsync(200);
       }
 
       // 3. 安全防护：若极端情况下超过 4 秒依然存活，先 SIGTERM
@@ -663,7 +680,7 @@ export function stopUrnSocksInstant(options?: { skipCloudCleanup?: boolean }): {
     console.warn('[Scale-to-Zero] 优雅停止代理异常:', err?.message);
   }
 
-  const listening = isSocksListening(19999);
+  const listening = await isSocksListeningAsync(19999);
   return {
     ok: !listening,
     message: listening ? 'SOCKS5 代理仍有连接未退出' : 'SOCKS5 代理已优雅关闭，连接已释放，流量已回收',
@@ -697,7 +714,9 @@ export function setProxyToggle(mode: 'yes' | 'no' | string): 'yes' | 'no' {
     try {
       fs.writeFileSync(SLEEP_LOCK_FILE, String(Date.now()), 'utf8');
     } catch (_) {}
-    stopUrnSocksInstant();
+    // 后台异步执行优雅断开：stopUrnSocksInstant 内部要等代理退出（最多 4s），
+    // 若同步等待会把接口和事件循环卡住 —— 切直连时 webui 整站无响应的元凶。
+    void stopUrnSocksInstant();
     console.log('[Scale-to-Zero] ⚙️ 用户切换为【直连状态】：SOCKS5 代理已彻底断开并回收流量，严禁自动拉起');
   } else {
     // 用户设为代理模式：进入就绪状态（无需立即常驻拉起，等下一次对话按需拉起，或若当前有对话则唤醒）
@@ -707,7 +726,7 @@ export function setProxyToggle(mode: 'yes' | 'no' | string): 'yes' | 'no' {
       }
     } catch (_) {}
     if (activeTurnsCount > 0) {
-      ensureProxyAwake();
+      void ensureProxyAwake();
     } else {
       // 无对话时保持休眠状态，等到对话时再按需连接
       idleState = 'sleeping';
@@ -721,7 +740,7 @@ export function setProxyToggle(mode: 'yes' | 'no' | string): 'yes' | 'no' {
   return norm;
 }
 
-export function resolveAntigravityProxyEnv(baseEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export async function resolveAntigravityProxyEnv(baseEnv: NodeJS.ProcessEnv = process.env): Promise<Record<string, string>> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value !== undefined) env[key] = value;
@@ -731,10 +750,10 @@ export function resolveAntigravityProxyEnv(baseEnv: NodeJS.ProcessEnv = process.
   // 关键自愈优化：即便开关设置为 yes，若 19999 代理端口并未真正监听，
   // 坚决不注入死代理（避免触发 connection refused 导致三方模型与所有请求卡死12次重试），
   // 而是安全优雅回退为直连模式（当前服务器直连 Google 4秒出词，稳定可靠）
-  let isListening = isSocksListening(19999);
+  let isListening = await isSocksListeningAsync(19999);
   if (mode === 'yes' && !isListening) {
     try {
-      const startRes = startUrnSocksInstant();
+      const startRes = await startUrnSocksInstant();
       isListening = startRes.socksListening;
     } catch (_) {}
   }
@@ -905,7 +924,7 @@ export async function rotateNodeAndVerify(maxAttempts = 5): Promise<boolean> {
       try {
         let pids: number[] = [];
         try {
-          const out = execFileSync('pgrep', ['-f', 'urnetwork/urnetwork-socks'], { encoding: 'utf8' });
+          const { stdout: out } = await execFileAsync('pgrep', ['-f', 'urnetwork/urnetwork-socks']);
           pids = out.trim().split('\n').filter(Boolean).map(Number);
         } catch (_) {}
 
@@ -930,7 +949,7 @@ export async function rotateNodeAndVerify(maxAttempts = 5): Promise<boolean> {
       let ready = false;
       const startWait = Date.now();
       while (Date.now() - startWait < 3500) {
-        if (isSocksListening(19999)) {
+        if (await isSocksListeningAsync(19999)) {
           ready = true;
           break;
         }
@@ -1015,9 +1034,9 @@ export async function ensureProxyAwake(): Promise<boolean> {
   idleTargetTimestamp = 0;
   idleState = 'active';
 
-  if (!isSocksListening(19999)) {
+  if (!(await isSocksListeningAsync(19999))) {
     console.log('[Scale-to-Zero] ⚡ 收到对话模型调用请求，按需自动唤醒 SOCKS5 代理...');
-    const res = startUrnSocksInstant();
+    const res = await startUrnSocksInstant();
     if (res.socksListening) {
       startProxyHealthWatchdog();
       noteProxyWake();
@@ -1081,7 +1100,7 @@ export function notifyTurnEnded(): void {
     console.log(`[Scale-to-Zero] ⏳ 当前模型对话已结束，启动 ${idleTimeoutMs / 1000} 秒空闲休眠倒计时...`);
     idleTimer = setTimeout(() => {
       if (activeTurnsCount === 0) {
-        sleepProxyNow();
+        void sleepProxyNow();
       }
     }, idleTimeoutMs);
   }
@@ -1091,7 +1110,7 @@ export function notifyTurnEnded(): void {
  * 立即休眠代理（优雅断开连接、向平台退还合约质押，回收待处理流量）
  * 供空闲倒计时触发或路由手动调用
  */
-export function sleepProxyNow(): { ok: boolean; message: string } {
+export async function sleepProxyNow(): Promise<{ ok: boolean; message: string }> {
   if (activeTurnsCount > 0) {
     return { ok: false, message: '当前有活跃的对话任务正在处理中，暂不可休眠' };
   }
@@ -1108,7 +1127,7 @@ export function sleepProxyNow(): { ok: boolean; message: string } {
   idleTargetTimestamp = 0;
   idleState = 'sleeping';
 
-  const stopRes = stopUrnSocksInstant();
+  const stopRes = await stopUrnSocksInstant();
   // 只有真的睡下了才记时间：ok 的语义是「端口已不再监听」
   if (stopRes.ok) {
     lastSleepAt = Date.now();
@@ -1139,12 +1158,12 @@ export async function prewarmProxy(): Promise<{ ok: boolean; message: string; so
     if (fs.existsSync(SLEEP_LOCK_FILE)) fs.unlinkSync(SLEEP_LOCK_FILE);
   } catch (_) {}
 
-  if (!isSocksListening(19999)) {
+  if (!(await isSocksListeningAsync(19999))) {
     if (activeTurnsCount > 0) {
       return { ok: true, message: '已有对话在进行', socksListening: true };
     }
     console.log('[Scale-to-Zero] ⌨️ 用户开始输入，提前预热 SOCKS5 代理...');
-    const res = startUrnSocksInstant();
+    const res = await startUrnSocksInstant();
     if (!res.socksListening) {
       return { ok: false, message: res.message || '代理启动中...', socksListening: false };
     }
@@ -1186,7 +1205,7 @@ export async function wakeProxyNow(): Promise<{ ok: boolean; message: string }> 
     }
   } catch (_) {}
 
-  const res = startUrnSocksInstant();
+  const res = await startUrnSocksInstant();
   idleState = 'active';
   if (res.ok) {
     startProxyHealthWatchdog();

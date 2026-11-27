@@ -1511,7 +1511,7 @@ class AntigravityAccountsService {
         };
         activeLogins.set(id, session);
         const binPath = resolveAntigravityBinary();
-        const env = resolveAntigravityProxyEnv({
+        const env = await resolveAntigravityProxyEnv({
             ...process.env,
             SSH_CONNECTION: process.env.SSH_CONNECTION || 'remote',
             HOME: fakeHome,

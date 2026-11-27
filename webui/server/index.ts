@@ -269,7 +269,7 @@ app.all('/api/system/proxy-test', async (req: Request, res: Response) => {
 
 app.get('/api/proxy/status', async (_req: Request, res: Response) => {
   const { getProxyStatus } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
-  res.json(getProxyStatus());
+  res.json(await getProxyStatus());
 });
 
 app.get('/api/proxy/balance', async (req: Request, res: Response) => {
@@ -293,7 +293,7 @@ app.get('/api/proxy/locations', async (_req: Request, res: Response) => {
 
 app.post('/api/proxy/restart', async (_req: Request, res: Response) => {
   const { restartProxy } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
-  res.json(restartProxy());
+  res.json(await restartProxy());
 });
 
 app.post('/api/proxy/rotate', async (_req: Request, res: Response) => {
@@ -358,7 +358,7 @@ app.post('/api/system/settings', async (req: Request, res: Response) => {
     }
 
     if (proxy.restartImmediately) {
-      restartProxy();
+      await restartProxy();
       changed.push('已重启 SOCKS5 守护进程');
     }
   }

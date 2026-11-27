@@ -710,7 +710,7 @@ router.get(
   '/antigravity/proxy/status',
   asyncHandler(async (_req: Request, res: Response) => {
     const { getProxyStatus } = await import('./list/antigravity/antigravity-proxy.js');
-    res.json(createApiSuccessResponse(getProxyStatus()));
+    res.json(createApiSuccessResponse(await getProxyStatus()));
   }),
 );
 
@@ -743,7 +743,7 @@ router.post(
   '/antigravity/proxy/restart',
   asyncHandler(async (_req: Request, res: Response) => {
     const { restartProxy } = await import('./list/antigravity/antigravity-proxy.js');
-    const result = restartProxy();
+    const result = await restartProxy();
     res.json(createApiSuccessResponse(result));
   }),
 );
@@ -761,7 +761,7 @@ router.post(
   '/antigravity/proxy/sleep',
   asyncHandler(async (_req: Request, res: Response) => {
     const { sleepProxyNow } = await import('./list/antigravity/antigravity-proxy.js');
-    const result = sleepProxyNow();
+    const result = await sleepProxyNow();
     res.json(createApiSuccessResponse(result));
   }),
 );
@@ -842,7 +842,7 @@ router.post(
       }
 
       if (proxy.restartImmediately) {
-        restartProxy();
+        await restartProxy();
         changed.push('已重启 SOCKS5 守护进程');
       }
     }

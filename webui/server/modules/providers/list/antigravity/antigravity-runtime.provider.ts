@@ -773,7 +773,7 @@ function startAntigravityTranscriptTailer(options: {
  * Exported for `server/modules/providers/tests/antigravity-runtime.test.ts`.
  */
 export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnAttemptResult> {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     const {
       command,
       workingDir,
@@ -871,7 +871,7 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
     }
 
     const binPath = resolveAntigravityBinary();
-    const childEnv = resolveAntigravityProxyEnv({
+    const childEnv = await resolveAntigravityProxyEnv({
       ...process.env,
       HOME: process.env.AGY_HOME || process.env.HOME,
     });

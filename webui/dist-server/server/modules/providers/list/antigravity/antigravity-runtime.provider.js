@@ -681,7 +681,7 @@ function startAntigravityTranscriptTailer(options) {
  * Exported for `server/modules/providers/tests/antigravity-runtime.test.ts`.
  */
 export function runAntigravityTurnOnce(params) {
-    return new Promise((resolve, reject) => {
+    return new Promise(async (resolve, reject) => {
         const { command, workingDir, model, effort, permissionMode, skipPermissions, hookAddDir, images, files, capturedSessionId, accumulatedText, ws, currentSessionKey, appSessionId, abortSignal, onSessionDiscovered, onTextDelta, onFullText, onProcessSpawned, spawnImpl = spawnFunction, } = params;
         if (abortSignal.aborted) {
             reject(new Error('context canceled'));
@@ -748,7 +748,7 @@ export function runAntigravityTurnOnce(params) {
             prompt = appendFilesInputTag(appendImagesInputTag(prompt, images), files);
         }
         const binPath = resolveAntigravityBinary();
-        const childEnv = resolveAntigravityProxyEnv({
+        const childEnv = await resolveAntigravityProxyEnv({
             ...process.env,
             HOME: process.env.AGY_HOME || process.env.HOME,
         });

@@ -541,7 +541,7 @@ router.all('/antigravity/proxy-test', asyncHandler(async (req, res) => {
 }));
 router.get('/antigravity/proxy/status', asyncHandler(async (_req, res) => {
     const { getProxyStatus } = await import('./list/antigravity/antigravity-proxy.js');
-    res.json(createApiSuccessResponse(getProxyStatus()));
+    res.json(createApiSuccessResponse(await getProxyStatus()));
 }));
 router.get('/antigravity/proxy/urn-balance', asyncHandler(async (req, res) => {
     const { fetchUrnBalanceDetails } = await import('./list/antigravity/antigravity-proxy.js');
@@ -562,7 +562,7 @@ router.get('/antigravity/proxy/locations', asyncHandler(async (_req, res) => {
 }));
 router.post('/antigravity/proxy/restart', asyncHandler(async (_req, res) => {
     const { restartProxy } = await import('./list/antigravity/antigravity-proxy.js');
-    const result = restartProxy();
+    const result = await restartProxy();
     res.json(createApiSuccessResponse(result));
 }));
 router.post('/antigravity/proxy/rotate', asyncHandler(async (_req, res) => {
@@ -572,7 +572,7 @@ router.post('/antigravity/proxy/rotate', asyncHandler(async (_req, res) => {
 }));
 router.post('/antigravity/proxy/sleep', asyncHandler(async (_req, res) => {
     const { sleepProxyNow } = await import('./list/antigravity/antigravity-proxy.js');
-    const result = sleepProxyNow();
+    const result = await sleepProxyNow();
     res.json(createApiSuccessResponse(result));
 }));
 router.post('/antigravity/proxy/wake', asyncHandler(async (_req, res) => {
@@ -642,7 +642,7 @@ router.post('/antigravity/proxy/settings', asyncHandler(async (req, res) => {
             changed.push('代理凭据/出口节点设置');
         }
         if (proxy.restartImmediately) {
-            restartProxy();
+            await restartProxy();
             changed.push('已重启 SOCKS5 守护进程');
         }
     }

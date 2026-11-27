@@ -232,7 +232,7 @@ app.all('/api/system/proxy-test', async (req, res) => {
 });
 app.get('/api/proxy/status', async (_req, res) => {
     const { getProxyStatus } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
-    res.json(getProxyStatus());
+    res.json(await getProxyStatus());
 });
 app.get('/api/proxy/balance', async (req, res) => {
     const { fetchUrnBalanceDetails } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
@@ -253,7 +253,7 @@ app.get('/api/proxy/locations', async (_req, res) => {
 });
 app.post('/api/proxy/restart', async (_req, res) => {
     const { restartProxy } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
-    res.json(restartProxy());
+    res.json(await restartProxy());
 });
 app.post('/api/proxy/rotate', async (_req, res) => {
     const { rotateNodeAndVerify, getProxyHealthStatus } = await import('./modules/providers/list/antigravity/antigravity-proxy.js');
@@ -320,7 +320,7 @@ app.post('/api/system/settings', async (req, res) => {
             changed.push('代理凭据/出口节点设置');
         }
         if (proxy.restartImmediately) {
-            restartProxy();
+            await restartProxy();
             changed.push('已重启 SOCKS5 守护进程');
         }
     }
