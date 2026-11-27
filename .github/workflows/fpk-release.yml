@@ -31,8 +31,11 @@ jobs:
         run: echo "version=$(node -p "require('./webui/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Build in arm64 container (node 22)
+        env:
+          RUNNER_GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           docker run --rm --platform linux/arm64 \
+            -e GITHUB_TOKEN="$RUNNER_GH_TOKEN" \
             -v "$PWD":/work -w /work/webui \
             node:22-bookworm \
             bash -c '
@@ -40,6 +43,8 @@ jobs:
               # node-gyp 需要 python3（node 官方镜像含 gcc/g++/make 但不含 python3）
               apt-get update -qq && apt-get install -y -qq python3 >/dev/null
               export HUSKY=0
+              # GITHUB_TOKEN 供 @vscode/ripgrep / better-sqlite3 / bcrypt 等
+              # prebuild 下载脚本使用，避免 api.github.com 匿名限流
               npm ci --no-audit --no-fund
               npm run build
               node -p "require(\"./package.json\").version"
