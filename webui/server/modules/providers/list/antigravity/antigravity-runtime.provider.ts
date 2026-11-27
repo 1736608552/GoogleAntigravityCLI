@@ -322,17 +322,122 @@ function resolveAntigravityModelAndEffort(
   return { resolvedModel, resolvedEffort };
 }
 
-const CHINESE_LANGUAGE_RULE_CONTENT = `# Antigravity 全局语言与思维规范 (Global Language & Reasoning Guidelines)
+/** 教程块的边界标记。带上它才能在版本升级时原地替换，而不是无限追加。 */
+const TUTORIAL_START_TAG = '<!-- antigravity-tutorial:start -->';
+const TUTORIAL_END_TAG = '<!-- antigravity-tutorial:end -->';
 
-无论在任何场景、处理何种任务或项目，必须严格执行以下准则：
+/**
+ * 给模型看的环境上手说明。
+ *
+ * 定位：这不是「规则」，是「说明书」。老版本写的是命令式条款（必须…严禁…），
+ * 每一轮全量加载、还锁死推理语言，实测对复杂推理是净损失。
+ * 这里改成陈述环境事实与协作约定：说清楚它在什么环境里跑、输出流向哪里、
+ * 什么该做/什么不该做，让模型自己判断，而不是靠禁令压制。
+ *
+ * 体积控制在 2KB 以内——这份文件每一轮都会被完整读入上下文，越长越稀释真实需求。
+ */
+const AGENT_TUTORIAL_CONTENT = `# 运行环境说明
 
-## 1. 回复与交互 (Output & Responses)
-- **始终使用中文回复用户**：所有对用户的解释、总结、方案陈述、执行汇报均使用规范、流畅、通俗易懂的中文。
-- **工具调用摘要**：所有工具调用的 toolAction 与 toolSummary 尽可能使用规范中文表达。
-- **技术名词规范**：常见行业标准词汇（如 Git, Docker, API, JSON, SOCKS5, Token 等）可保留英文原词，其余文本一律使用中文。
-`;
+本文件由控制台维护，标记之间的内容会在版本升级时整体替换。
 
-export const CHINESE_ENFORCEMENT_PREFIX = '【系统要求：本轮交互所有思维推理(<thinking>)与任务执行分析必须全程100%使用中文撰写，严禁使用任何英文组织思路】\n\n';
+## 环境
+你运行在 Antigravity CLI 中，由 Web 控制台通过 stream-json 驱动。你的正文、思考过程、每一次工具调用及其结果都会实时推送到网页，用户边跑边看——所以不必在结尾复述"我做了什么"，把结论和证据讲清楚即可。
+会话历史落盘在 transcript.jsonl，重开同一会话能接上上下文，新会话则是全新上下文。工作目录即项目根目录，与你读写的文件是同一份文件系统。
+
+## 协作约定
+- 用简体中文回复，技术名词（Git、Docker、API、JSON 等）保留英文原词。
+- 结论先行：先给判断和依据，再展开细节。不要用"我将要…"的计划陈述代替实际执行。
+- 分别说清"已验证"与"推测"，不确定就说不确定。
+
+## 工具使用
+- 能查证的一律查证：文件内容、版本号、配置值、日志、进程状态都读原文，不凭记忆作答。
+- 调用前用一句话说明目的；一次调用只做一件事。
+- 改文件前先读；大文件按区间读取；删除、覆盖、重启服务等操作先说明影响范围。
+- 被权限拦住时如实报告，不要假装成功。
+
+## 出错时
+先贴原始报错（保留英文原文），再给判断，并说明验证到哪一步。无法自行解决的环境问题（权限、属主、端口占用、外部服务不可达）直接说明卡在哪，给出下一步可执行的动作。
+
+## 这个仓库
+- 源码：\`webui/server\`（Express + WebSocket）、\`webui/src\`（React）
+- 产物：\`webui/dist-server\`、\`webui/dist\`，两者都入库；改源码后必须重建并提交，否则线上跑的仍是旧逻辑
+- 运行时文件（配置、日志、会话库）的属主可能不同于仓库代码，改动前先确认`;
+
+/**
+ * 历史遗留：曾经把「本轮思维推理必须全程使用中文」拼进每条 user message。
+ * 已彻底移除——模型并不真正执行这类元指令，实际效果只是每轮稀释用户的真实需求，
+ * 反而拉低复杂任务的准确率。输出语言改由教程文件里的协作约定承担。
+ */
+
+function backupOnce(filePath: string): void {
+  const backupPath = `${filePath}.bak-agy-rules`;
+  try {
+    if (!fs.existsSync(backupPath)) fs.copyFileSync(filePath, backupPath);
+  } catch (_) {}
+}
+
+/**
+ * 清理历史版本洒在各处的规则文件。
+ *
+ * 只做两件事，绝不做模糊的整份切割：
+ * 1. 摘掉「强制中文推理」这类反而拖后腿的小节（按 `## n.` 小节边界精确切）；
+ * 2. 如果摘完已经一个二级小节都不剩，说明整份文件就是当年 writeFileSync 写下的模板，
+ *    直接清空，省得每轮白加载几十行。
+ *
+ * 有用户自己写的内容就原样保留——线上那份 GEMINI.md 的一级标题也是本程序的旧模板，
+ * 但标题下面挂着用户手写的业务协议，按标题吞会连用户内容一起删掉（已踩过一次）。
+ */
+function pruneLegacyRuleFile(filePath: string): void {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const before = fs.readFileSync(filePath, 'utf8');
+
+    pruneThinkingLanguageRules(filePath);
+
+    const current = fs.readFileSync(filePath, 'utf8');
+    if (current === before) return;
+    if (/^##\s/m.test(current)) return; // 还有用户小节，保留
+
+    backupOnce(filePath);
+    fs.writeFileSync(filePath, '', 'utf8');
+    console.log('[Antigravity Runtime] 已清空历史规则模板文件:', filePath);
+  } catch (err: any) {
+    console.warn('[Antigravity Runtime] pruneLegacyRuleFile error:', err?.message);
+  }
+}
+
+/**
+ * 写入/更新环境说明块。
+ * 用成对标记定位：版本升级时原地替换，不会重复追加（老实现只判断关键词，改一次就堆一次）。
+ */
+function upsertTutorialBlock(filePath: string): void {
+  try {
+    const block = `${TUTORIAL_START_TAG}\n${AGENT_TUTORIAL_CONTENT}\n${TUTORIAL_END_TAG}`;
+    const current = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
+
+    const startIdx = current.indexOf(TUTORIAL_START_TAG);
+    const endIdx = current.indexOf(TUTORIAL_END_TAG);
+    const hasBlock = startIdx >= 0 && endIdx > startIdx;
+
+    const next = hasBlock
+      ? current.slice(0, startIdx) + block + current.slice(endIdx + TUTORIAL_END_TAG.length)
+      : `${current.trimEnd()}${current.trim() ? '\n\n' : ''}${block}\n`;
+
+    if (next === current) return;
+
+    if (current.trim()) backupOnce(filePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, next, 'utf8');
+    console.log(
+      '[Antigravity Runtime] 已写入运行环境说明:',
+      filePath,
+      hasBlock ? '(替换旧版本)' : '(首次写入)',
+    );
+  } catch (err: any) {
+    console.warn('[Antigravity Runtime] upsertTutorialBlock error:', err?.message);
+  }
+}
+
 
 
 /**
@@ -376,46 +481,34 @@ function pruneThinkingLanguageRules(filePath: string): void {
   }
 }
 
-export function ensureChineseRules(workingDir?: string) {
+export function ensureAgentTutorial(): void {
   try {
-    const homeDir = process.env.AGY_HOME || process.env.HOME || '/tmp/agy-test/home';
-    const targetDirs = [
-      homeDir,
-      path.join(homeDir, '.gemini', 'config'),
-      path.join(homeDir, '.gemini', 'antigravity-cli'),
+    const homeDir = process.env.AGY_HOME || process.env.HOME || process.env.USERPROFILE;
+    if (!homeDir) return;
+
+    // 只认一个权威位置：CLI 启动时必然读取 ~/.gemini/config/GEMINI.md。
+    // 老实现往 5 个目录各写一份，同一份说明被重复加载数倍，纯属自我稀释。
+    const configDir = path.join(homeDir, '.gemini', 'config');
+    const authorityFile = path.join(configDir, 'GEMINI.md');
+
+    const legacyFiles = [
+      path.join(homeDir, 'GEMINI.md'),
+      path.join(homeDir, 'AGENTS.md'),
+      path.join(homeDir, '.gemini', 'GEMINI.md'),
+      path.join(homeDir, '.gemini', 'AGENTS.md'),
+      path.join(homeDir, '.gemini', 'antigravity-cli', 'GEMINI.md'),
+      path.join(homeDir, '.gemini', 'antigravity-cli', 'AGENTS.md'),
     ];
+    for (const file of legacyFiles) pruneLegacyRuleFile(file);
 
-    if (workingDir) {
-      targetDirs.push(workingDir);
-    }
-
-    for (const dir of targetDirs) {
-      if (!fs.existsSync(dir)) {
-        try {
-          fs.mkdirSync(dir, { recursive: true });
-        } catch (_) {}
-      }
-
-      for (const filename of ['GEMINI.md', 'AGENTS.md']) {
-        const filePath = path.join(dir, filename);
-        if (!fs.existsSync(filePath)) {
-          fs.writeFileSync(filePath, CHINESE_LANGUAGE_RULE_CONTENT, 'utf8');
-        } else {
-          try {
-            // 先清掉历史遗留的「强制中文推理」小节，再判断是否需要补写语言偏好
-            pruneThinkingLanguageRules(filePath);
-            const content = fs.readFileSync(filePath, 'utf8');
-            if (!content.includes('始终使用中文回复用户')) {
-              fs.appendFileSync(filePath, '\n\n' + CHINESE_LANGUAGE_RULE_CONTENT, 'utf8');
-            }
-          } catch (_) {}
-        }
-      }
-    }
+    // 先摘掉「强制中文推理」这种拖后腿的条款（用户自己写的其余小节原样保留），再落新版说明
+    pruneThinkingLanguageRules(authorityFile);
+    upsertTutorialBlock(authorityFile);
   } catch (err: any) {
-    console.warn('[Antigravity Runtime] ensureChineseRules error:', err?.message);
+    console.warn('[Antigravity Runtime] ensureAgentTutorial error:', err?.message);
   }
 }
+
 
 type TurnAttemptParams = {
   command: string;
@@ -460,53 +553,7 @@ class QuotaExhaustedError extends Error {
   }
 }
 
-const CHINESE_RULES_CONTENT = `# Antigravity 全局语言与思维规范 (Global Language & Reasoning Guidelines)
 
-无论在任何场景、处理何种任务或项目，必须严格执行以下准则：
-
-## 1. 深度思考过程 (Thinking Process / Chain-of-Thought)
-- **必须全程使用中文思考**：模型内部的所有思维推理过程（包括 <thinking> 内部的逻辑分析、推导演进、工具调用规划、风险研判与反思），**一律且必须使用中文**。
-- **严禁英文思考**：除代码标识符、系统指令、函数名称或错误原文字符串外，禁止在思考过程中使用英文组织语言。
-
-## 2. 回复与交互 (Output & Responses)
-- **始终使用中文回复用户**：所有对用户的解释、总结、方案陈述、执行汇报均使用规范、流畅、通俗易懂的中文。
-- **技术名词规范**：常见行业标准词汇（如 Git, Docker, API, JSON, SOCKS5, Token 等）可保留英文原词，其余文本一律使用中文。
-`;
-
-function ensureAntigravityGlobalRules(workingDir?: string): void {
-  try {
-    const homeDir = process.env.HOME || process.env.USERPROFILE || '/tmp/agy-test/home';
-    const targetDirs = [
-      homeDir,
-      path.join(homeDir, '.gemini'),
-      path.join(homeDir, '.gemini', 'config'),
-      path.join(homeDir, '.gemini', 'antigravity-cli'),
-    ];
-
-    if (workingDir && fs.existsSync(workingDir)) {
-      targetDirs.push(workingDir);
-    }
-
-    for (const dir of targetDirs) {
-      try {
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
-        }
-        const ruleFile = path.join(dir, 'GEMINI.md');
-        if (!fs.existsSync(ruleFile)) {
-          fs.writeFileSync(ruleFile, CHINESE_RULES_CONTENT, 'utf8');
-        } else {
-          const content = fs.readFileSync(ruleFile, 'utf8');
-          if (!content.includes('必须全程使用中文思考')) {
-            fs.appendFileSync(ruleFile, '\n\n' + CHINESE_RULES_CONTENT, 'utf8');
-          }
-        }
-      } catch (_) {}
-    }
-  } catch (err) {
-    console.warn('[Antigravity Runtime] ensureAntigravityGlobalRules error:', err);
-  }
-}
 
 type TranscriptTailerHandle = { stop: () => void };
 
@@ -755,8 +802,8 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       return;
     }
 
-    // Ensure Chinese reasoning rules are permanently present in workspace and user configs
-    ensureAntigravityGlobalRules(workingDir);
+    // 每轮补齐运行环境说明（幂等：内容未变则不写盘）
+    ensureAgentTutorial();
 
     const baseArgs = [
       '--input-format', 'stream-json',
@@ -798,25 +845,23 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
     const hasPermissionPolicy = prompt.includes('【🔒 权限策略：') || prompt.includes('【🛡️ 权限策略：');
     const policyBlock = permissionPolicy && !hasPermissionPolicy ? `${permissionPolicy}\n\n` : '';
 
-    if (prompt && !prompt.includes(CHINESE_ENFORCEMENT_PREFIX)) {
+    if (prompt) {
       if (isBoostCommand) {
         if (prompt.startsWith('/')) {
           const firstLineEnd = prompt.indexOf('\n');
           if (firstLineEnd !== -1) {
             const firstLine = prompt.slice(0, firstLineEnd);
             const rest = prompt.slice(firstLineEnd + 1);
-            prompt = `${firstLine}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${rest}`;
+            prompt = `${firstLine}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${rest}`;
           } else {
-            prompt = `${prompt}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}`;
+            prompt = `${prompt}\n\n${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}`;
           }
         } else {
-          prompt = `${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${prompt}`;
+          prompt = `${BOOST_MODE_INSTRUCTION}\n\n${policyBlock}${prompt}`;
         }
-      } else {
-        prompt = `${policyBlock}${CHINESE_ENFORCEMENT_PREFIX}${prompt}`;
+      } else if (policyBlock) {
+        prompt = `${policyBlock}${prompt}`;
       }
-    } else if (prompt && policyBlock) {
-      prompt = `${policyBlock}${prompt}`;
     }
     const hasAttachments =
       normalizeAttachmentDescriptors(images).length > 0 ||
@@ -1493,8 +1538,8 @@ export async function spawnAntigravity(
   const workingDir = cwd || projectPath || process.cwd();
   const processKey = sessionId || Date.now().toString();
 
-  // Enforce Chinese reasoning rules in both global config and active project workspace
-  ensureChineseRules(workingDir);
+  // 每轮补齐运行环境说明（幂等：内容未变则不写盘）
+  ensureAgentTutorial();
 
   let capturedSessionId = providerSessionId;
   let sessionCreatedSent = false;
