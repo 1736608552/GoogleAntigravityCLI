@@ -1,0 +1,69 @@
+name: FPK Release (fnOS)
+
+# 手动触发：在 arm64 容器中编译前端/服务端（含 better-sqlite3、bcrypt、node-pty
+# 原生模块的 arm64 编译），然后按飞牛 fnOS fpk 规范打包并发布 Release。
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: 'Release 说明（可选，默认自动生成）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-fpk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Read version
+        id: version
+        run: echo "version=$(node -p "require('./webui/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Build in arm64 container (node 22)
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD":/work -w /work/webui \
+            node:22-bookworm \
+            bash -c '
+              set -euxo pipefail
+              # node-gyp 需要 python3（node 官方镜像含 gcc/g++/make 但不含 python3）
+              apt-get update -qq && apt-get install -y -qq python3 >/dev/null
+              export HUSKY=0
+              npm ci --no-audit --no-fund
+              npm run build
+              node -p "require(\"./package.json\").version"
+            '
+
+      - name: Assemble FPK
+        run: bash webui/scripts/build-fpk.sh webui
+
+      - name: Create Release and Upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euxo pipefail
+          TAG="v${VERSION}"
+          FPK="webui/artifacts/GoogleAntigravityCLI-v${VERSION}-arm.fpk"
+          ls -la "$FPK"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FPK" --clobber
+          else
+            if [ -n "$NOTES" ]; then
+              gh release create "$TAG" "$FPK" --title "$TAG" --notes "$NOTES"
+            else
+              gh release create "$TAG" "$FPK" --title "$TAG" --generate-notes
+            fi
+          fi
