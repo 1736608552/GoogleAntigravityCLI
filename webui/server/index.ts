@@ -15,6 +15,19 @@ try {
   dns.setDefaultResultOrder('ipv4first');
 } catch (_) {}
 
+// 防止偶发异步网络/Socket错误导致整个 WebUI 服务无辜崩溃重启
+process.on('uncaughtException', (err: any) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error('[Server Fatal] Port already in use:', err);
+    process.exit(1);
+  }
+  console.error('[Server Guard] Caught uncaughtException:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server Guard] Caught unhandledRejection:', reason);
+});
+
 import { AppError, findApplicationRoot, getModuleDirectory, IS_PLATFORM, terminalTextStyles } from '@/shared/utils.js';
 import {
     closeSessionsWatcher,

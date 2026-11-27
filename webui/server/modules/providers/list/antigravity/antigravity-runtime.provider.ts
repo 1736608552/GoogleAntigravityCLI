@@ -509,7 +509,7 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       // 单回合最大执行超时放宽至 24 小时，彻底支持过夜挂机、深度自动化分析与超大工程重构
-      '--print-timeout', process.env.AGY_PRINT_TIMEOUT || '24h',
+      '--print-timeout', process.env.AGY_PRINT_TIMEOUT || '15m',
     ];
 
     const isBoostCommand = Boolean(command && /^\/boost\b/i.test(command.trim()));
@@ -661,6 +661,7 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
     const seenToolCallIds = new Set<string>();
     let lastActiveToolCall: { id: string; name: string } | null = null;
     let turnStepCounter = 0;
+    const accumulatedThoughtsByStep = new Map<number, string>();
 
     const processOutputLine = (line: string, allowAfterSettled = false) => {
       if ((!allowAfterSettled && isSettled) || !line || !line.trim()) return;
@@ -737,6 +738,39 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
           quotaErrorDetails = { message: formattedMsg, resetMsg: resetDuration, rawText: rawErr };
           try { antigravityProcess.kill('SIGTERM'); } catch (_) {}
           return;
+        }
+
+        // Thought / reasoning（置于 tool_info 之前，确保带工具调用的步骤也能实时推送思考内容）
+        const thoughtDelta =
+          update.thinking_delta ||
+          update.thought_delta ||
+          update.reasoning_delta ||
+          '';
+        const fullThought =
+          update.thought ||
+          update.thinking ||
+          update.reasoning ||
+          ((stepType.includes('think') || stepType.includes('reason'))
+            ? (update.content || update.text_delta)
+            : '');
+        let mergedThought = '';
+        if (typeof fullThought === 'string' && fullThought.trim()) {
+          mergedThought = fullThought.trim();
+          accumulatedThoughtsByStep.set(Number(stepIdx), mergedThought);
+        } else if (typeof thoughtDelta === 'string' && thoughtDelta) {
+          const prevThought = accumulatedThoughtsByStep.get(Number(stepIdx)) || '';
+          mergedThought = prevThought + thoughtDelta;
+          accumulatedThoughtsByStep.set(Number(stepIdx), mergedThought);
+        }
+        if (mergedThought.trim()) {
+          ws.send(createNormalizedMessage({
+            id: `thinking-${activeSession}-${stepIdx}`,
+            kind: 'thinking',
+            role: 'assistant',
+            content: mergedThought.trim(),
+            sessionId: activeSession,
+            provider: 'antigravity',
+          }));
         }
 
         // Tool calls and tool execution results
@@ -860,26 +894,6 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
           return;
         }
 
-
-        // Thought / reasoning（兼容全量与增量字段，确保实时流中即可看到思考内容）
-        const thought =
-          update.thought ||
-          update.thinking ||
-          update.reasoning ||
-          update.thinking_delta ||
-          update.thought_delta ||
-          update.reasoning_delta ||
-          ((stepType.includes('think') || stepType.includes('reason'))
-            ? (update.content || update.text_delta)
-            : '');
-        if (thought && typeof thought === 'string' && thought.trim()) {
-          ws.send(createNormalizedMessage({
-            kind: 'thinking',
-            content: thought.trim(),
-            sessionId: activeSession,
-            provider: 'antigravity',
-          }));
-        }
 
         // Text delta streaming with delta deduplication
         // 注意：绝不在阶段性文本输出后通过短时静默定时器提前结算，

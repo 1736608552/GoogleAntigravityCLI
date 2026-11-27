@@ -24,6 +24,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { api } from '@/shared/api';
+import { fetchAntigravityQuota, getCachedAccountQuota } from '@/modules/chat/hooks/useAntigravityQuota';
 import { Badge, Button, LLMProviderLogo } from '@/shared/ui';
 import type { AntigravityAccount, ProviderAuthStatus } from '@/shared/types';
 
@@ -173,6 +174,18 @@ export default function AntigravityAccountManager({
   const [deletingEmail, setDeletingEmail] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [liveQuota, setLiveQuota] = useState(() => getCachedAccountQuota());
+  const [isRefreshingQuota, setIsRefreshingQuota] = useState(false);
+
+  const handleRefreshQuota = useCallback(async () => {
+    setIsRefreshingQuota(true);
+    try {
+      const snap = await fetchAntigravityQuota(true);
+      if (snap) setLiveQuota(snap);
+    } finally {
+      setIsRefreshingQuota(false);
+    }
+  }, []);
 
   // Inline editing account label
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
@@ -651,73 +664,105 @@ export default function AntigravityAccountManager({
         </div>
       </div>
 
-      {/* 2. Network Mode Quick Status Card */}
-      <div className="rounded-2xl border border-border/70 bg-card/60 p-3.5 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 shadow-xs shrink-0">
-              {proxyMode === 'yes' ? <Globe className="h-4 w-4" /> : <Zap className="h-4 w-4 text-amber-500" />}
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-foreground whitespace-nowrap">网络连接模式</span>
-                <span className={`inline-flex items-center px-1.5 py-0.2 text-[9.5px] rounded-md font-medium ${
-                  proxyMode === 'yes'
-                    ? 'bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-500/30'
-                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-300 border border-amber-500/30'
-                }`}>
-                  {proxyMode === 'yes' ? 'SOCKS5 代理模式' : '直连模式 (Direct)'}
-                </span>
+      {/* 2. Active Account Live Quota Card */}
+      {(() => {
+        const displaySnap = liveQuota || activeAccount?.quotaSnapshot;
+        const g5h = displaySnap?.gemini5h;
+        const gWk = displaySnap?.geminiWeekly;
+        const c5h = displaySnap?.claude5h;
+        const cWk = displaySnap?.claudeWeekly;
+        const g5hPct = g5h?.percent ?? 100;
+        const gWkPct = gWk?.percent ?? 100;
+        const c5hPct = c5h?.percent ?? 100;
+        const cWkPct = cWk?.percent ?? 100;
+        return (
+          <div className="rounded-2xl border border-border/70 bg-card/60 p-3.5 shadow-xs space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Zap className="h-4 w-4 text-emerald-500 shrink-0" />
+                <span className="text-xs font-semibold text-foreground">实时配额概览</span>
+                {displaySnap?.accountEmail && (
+                  <span className="truncate font-mono text-[10.5px] text-muted-foreground">
+                    {displaySnap.accountEmail}
+                  </span>
+                )}
               </div>
-              <p className="text-[11px] text-muted-foreground mt-0.5 leading-normal">
-                {proxyMode === 'yes'
-                  ? '通过本地 SOCKS5 代理 (127.0.0.1:19999) 访问 Google 云端'
-                  : '纯直连 Google 官方 API 接口，极速无中转'}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-            <div className="flex items-center rounded-lg border border-border bg-background/80 p-0.5 shadow-xs">
-              <button
-                type="button"
-                disabled={isTogglingProxy}
-                onClick={() => void handleToggleProxy('no')}
-                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-all ${
-                  proxyMode === 'no'
-                    ? 'bg-amber-500 text-white shadow-xs font-semibold'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                ⚡ 直连
-              </button>
-              <button
-                type="button"
-                disabled={isTogglingProxy}
-                onClick={() => void handleToggleProxy('yes')}
-                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-all ${
-                  proxyMode === 'yes'
-                    ? 'bg-blue-600 text-white shadow-xs font-semibold'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                🌐 代理
-              </button>
-            </div>
-            {onNavigateToProxy && (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={onNavigateToProxy}
-                className="h-7 px-2.5 text-xs gap-1 rounded-lg border-border/70 text-muted-foreground hover:text-foreground"
+                onClick={() => void handleRefreshQuota()}
+                disabled={isRefreshingQuota}
+                className="h-7 px-2.5 text-[11px] shrink-0 gap-1 rounded-lg border-border/70 text-muted-foreground hover:text-foreground"
               >
-                <span>配置代理</span>
-                <ArrowRight className="h-3 w-3" />
+                <RefreshCw className={`h-3 w-3 ${isRefreshingQuota ? 'animate-spin' : ''}`} />
+                <span>拉取配额</span>
               </Button>
+            </div>
+
+            {!displaySnap ? (
+              <div className="py-2 text-center text-[11px] text-muted-foreground">
+                点击右上角「拉取配额」实时查询当前账号 5h 与周额度
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px]">
+                <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-2">
+                  <div className="flex items-center justify-between text-[10.5px] font-semibold text-emerald-600 dark:text-emerald-400">
+                    <span>Gemini 官方模型</span>
+                    <span>{g5hPct >= 50 ? '状态充沛' : g5hPct >= 20 ? '额度偏紧' : '额度告急'}</span>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-muted-foreground">5小时滚动额度</span>
+                      <span className="font-mono font-bold">{g5hPct}%</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${g5hPct <= 15 ? 'bg-rose-500' : g5hPct <= 35 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.max(2, Math.min(100, g5hPct))}%` }} />
+                    </div>
+                    {g5h?.resetsIn && <div className="text-[9.5px] text-muted-foreground">重置倒计时：{g5h.resetsIn}</div>}
+                  </div>
+                  <div className="space-y-1 pt-1 border-t border-border/30">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-muted-foreground">每周总额度</span>
+                      <span className="font-mono font-bold">{gWkPct}%</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${gWkPct <= 15 ? 'bg-rose-500' : gWkPct <= 35 ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${Math.max(2, Math.min(100, gWkPct))}%` }} />
+                    </div>
+                    {gWk?.resetsIn && <div className="text-[9.5px] text-muted-foreground">每周重置：{gWk.resetsIn}</div>}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-2">
+                  <div className="flex items-center justify-between text-[10.5px] font-semibold text-purple-600 dark:text-purple-400">
+                    <span>Claude & GPT 官方模型</span>
+                    <span>{c5hPct >= 50 ? '状态充沛' : c5hPct >= 20 ? '额度偏紧' : '额度告急'}</span>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-muted-foreground">5小时滚动额度</span>
+                      <span className="font-mono font-bold">{c5hPct}%</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${c5hPct <= 15 ? 'bg-rose-500' : c5hPct <= 35 ? 'bg-amber-500' : 'bg-purple-500'}`} style={{ width: `${Math.max(2, Math.min(100, c5hPct))}%` }} />
+                    </div>
+                    {c5h?.resetsIn && <div className="text-[9.5px] text-muted-foreground">重置倒计时：{c5h.resetsIn}</div>}
+                  </div>
+                  <div className="space-y-1 pt-1 border-t border-border/30">
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-muted-foreground">每周总额度</span>
+                      <span className="font-mono font-bold">{cWkPct}%</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${cWkPct <= 15 ? 'bg-rose-500' : cWkPct <= 35 ? 'bg-amber-500' : 'bg-indigo-500'}`} style={{ width: `${Math.max(2, Math.min(100, cWkPct))}%` }} />
+                    </div>
+                    {cWk?.resetsIn && <div className="text-[9.5px] text-muted-foreground">每周重置：{cWk.resetsIn}</div>}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* 3. Saved Accounts List */}
       <div className="rounded-2xl border border-border/70 bg-card/60 p-4 shadow-xs space-y-3">

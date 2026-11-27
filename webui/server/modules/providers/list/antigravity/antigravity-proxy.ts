@@ -334,6 +334,26 @@ export function startUrnSocksInstant(): { ok: boolean; message: string; socksLis
       }
       execFileSync('sleep', ['0.15']);
     }
+
+    // 若锁定单节点导致连接超时，自动回退到国家级智能选点重试，提高稳定性
+    if (urn.providerId) {
+      exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
+      const fallbackArgs = [
+        `--addr="127.0.0.1:19999"`,
+        `--user-auth="${urn.userAuth}"`,
+        `--password="${urn.password}"`,
+        `--country="${urn.country || 'United States'}"`,
+      ].join(' ');
+      exec(`nohup "${socksBin}" ${fallbackArgs} >> "${logFile}" 2>&1 &`);
+      const retryStart = Date.now();
+      while (Date.now() - retryStart < 3000) {
+        if (isSocksListening(19999)) {
+          startProxyHealthWatchdog();
+          return { ok: true, message: '已自动切换至同区优选节点并启动代理', socksListening: true };
+        }
+        execFileSync('sleep', ['0.15']);
+      }
+    }
   } catch (err: any) {
     return { ok: false, message: '启动代理异常: ' + (err?.message || '未知错误'), socksListening: false };
   }

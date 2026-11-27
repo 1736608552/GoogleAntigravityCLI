@@ -20,8 +20,8 @@ export default function AgentCategoryTabsSection({
   const { t } = useTranslation('settings');
 
   return (
-    <div className="flex-shrink-0 border-b border-border/60 bg-muted/20 px-3 py-2 md:px-5">
-      <div role="tablist" className="scrollbar-hide flex items-center gap-1 overflow-x-auto">
+    <div className="flex-shrink-0 border-b border-border/60 bg-muted/20 px-3 py-1.5 md:px-5">
+      <div role="tablist" className="scrollbar-hide flex items-center gap-1 overflow-x-auto px-0.5 py-1">
         {categories.map((category) => {
           const isSelected = selectedCategory === category;
           return (

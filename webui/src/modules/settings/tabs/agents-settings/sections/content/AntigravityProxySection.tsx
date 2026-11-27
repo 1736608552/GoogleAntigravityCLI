@@ -121,6 +121,8 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
   const [isSaving, setIsSaving] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
+  const [urnLoginStatus, setUrnLoginStatus] = useState<'idle' | 'logging_in' | 'logged_in' | 'failed'>('idle');
+  const [urnLoginDetail, setUrnLoginDetail] = useState<string>('');
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
@@ -297,6 +299,38 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
     }
   };
 
+  const waitForUrnLoginCompletion = useCallback(async () => {
+    setUrnLoginStatus('logging_in');
+    setUrnLoginDetail('正在登录 URnetwork 并建立多节点连接...');
+    setSuccessMsg('⏳ 正在登录 URnetwork 并建立连接，请稍候...');
+    setErrorMsg(null);
+    for (let i = 0; i < 5; i += 1) {
+      await new Promise((r) => setTimeout(r, 1500));
+      try {
+        const testRes = await api.providers.testAntigravityProxy();
+        if (testRes.ok) {
+          const td = await readApiJson<any>(testRes);
+          const result = td?.data || td;
+          if (result?.ok) {
+            const ms = result.latencyMs ? `${result.latencyMs}ms` : '已连通';
+            setUrnLoginStatus('logged_in');
+            setUrnLoginDetail(`URnetwork 已登录并就绪 (${ms})`);
+            setSuccessMsg(`✅ URnetwork 登录成功，代理已就绪 (${ms})`);
+            void loadAllSettings();
+            return;
+          }
+        }
+      } catch {
+        // continue polling
+      }
+    }
+    setUrnLoginStatus('failed');
+    setUrnLoginDetail('节点建连超时或鉴权失败 (401)，请核对账号密码');
+    setSuccessMsg(null);
+    setErrorMsg('URnetwork 登录/建连未在预期内完成，请检查代理账号密码是否正确或点击测速查看详情');
+    void loadAllSettings();
+  }, [loadAllSettings]);
+
   const handleSaveSettings = async () => {
     setIsSaving(true);
     setErrorMsg(null);
@@ -328,8 +362,12 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
           setHasPassword(true);
           setPassword('');
         }
-        setTimeout(() => setSuccessMsg(null), 4000);
-        void loadAllSettings();
+        if (proxyEnabled && userAuth.trim()) {
+          void waitForUrnLoginCompletion();
+        } else {
+          setTimeout(() => setSuccessMsg(null), 4000);
+          void loadAllSettings();
+        }
       } else {
         const d = await readApiJson<any>(res);
         setErrorMsg('保存失败: ' + (d?.data?.error || d?.error || '未知错误'));
@@ -348,10 +386,7 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
     try {
       const res = await api.providers.restartAntigravityProxy();
       if (res.ok) {
-        const d = await readApiJson<any>(res);
-        setSuccessMsg('✓ ' + (d?.data?.message || d?.message || '代理已重启，守护程序将在3秒内重新连接。'));
-        setTimeout(() => setSuccessMsg(null), 4000);
-        setTimeout(() => void loadAllSettings(), 2500);
+        await waitForUrnLoginCompletion();
       } else {
         const d = await readApiJson<any>(res);
         setErrorMsg('重启失败: ' + (d?.data?.error || d?.error || '无法重启代理'));
@@ -507,287 +542,75 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
         </div>
       )}
 
-      {/* 1. Google Active Account & Quota Card (解决账号也没显示) */}
-      <div className="rounded-2xl border border-border/70 bg-card/60 p-3.5 shadow-xs space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shadow-xs">
-              <UserCheck className="h-4 w-4" />
+      {/* 1. Network Mode Quick Status Card (从账户页对调至此) */}
+      <div className="rounded-2xl border border-border/70 bg-card/60 p-3.5 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 shadow-xs shrink-0">
+              {proxyEnabled ? <Globe className="h-4 w-4" /> : <Zap className="h-4 w-4 text-amber-500" />}
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs font-semibold text-foreground truncate">当前绑定的 Google 账号</span>
-                {activeAccount?.tier && (
-                  <span className="inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-bold border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 shadow-xs shrink-0">
-                    {activeAccount.tier}
-                  </span>
-                )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-foreground whitespace-nowrap">网络连接模式</span>
+                <span className={`inline-flex items-center px-1.5 py-0.2 text-[9.5px] rounded-md font-medium ${
+                  proxyEnabled
+                    ? "bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-500/30"
+                    : "bg-amber-500/10 text-amber-600 dark:text-amber-300 border border-amber-500/30"
+                }`}>
+                  {proxyEnabled ? "SOCKS5 代理模式" : "直连模式 (Direct)"}
+                </span>
               </div>
-              <div className="font-mono text-[11px] text-muted-foreground font-medium truncate mt-0.5">
-                {activeAccount?.email || '未检测到绑定的 Google 账号'}
-              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-normal">
+                {proxyEnabled
+                  ? "通过本地 SOCKS5 代理 (127.0.0.1:19999) 访问 Google 云端"
+                  : "纯直连 Google 官方 API 接口，极速无中转"}
+              </p>
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void handleRefreshLiveQuota()}
-            disabled={isRefreshingQuota}
-            className="h-7 px-2.5 text-[11px] shrink-0 gap-1 rounded-lg border-border/70 text-muted-foreground hover:text-foreground hover:bg-muted"
-            title="直接从 Google PA API 拉取真实配额"
-          >
-            <RefreshCw className={`h-3 w-3 ${isRefreshingQuota ? 'animate-spin' : ''}`} />
-            <span className="whitespace-nowrap">拉取配额</span>
-          </Button>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            <div className="flex items-center rounded-lg border border-border bg-background/80 p-0.5 shadow-xs">
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={async () => {
+                  setProxyEnabled(false);
+                  try {
+                    await api.providers.saveAntigravityProxySettings({ proxy: { enabled: false, mode: 'no' } });
+                    setSuccessMsg('网络连接模式已切换为：⚡ 直连模式 (Direct)');
+                    void loadAllSettings();
+                  } catch {}
+                }}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-all ${
+                  !proxyEnabled
+                    ? "bg-amber-500 text-white shadow-xs font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                ⚡ 直连
+              </button>
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={async () => {
+                  setProxyEnabled(true);
+                  try {
+                    await api.providers.saveAntigravityProxySettings({ proxy: { enabled: true, mode: 'yes' } });
+                    setSuccessMsg('网络连接模式已切换为：🌐 SOCKS5 代理模式');
+                    void loadAllSettings();
+                  } catch {}
+                }}
+                className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-all ${
+                  proxyEnabled
+                    ? "bg-blue-600 text-white shadow-xs font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                🌐 代理
+              </button>
+            </div>
+          </div>
         </div>
-
-        {/* Multi-account Switcher Chips */}
-        {accounts.length > 1 && (
-          <div className="pt-2 border-t border-border/40 space-y-1.5">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span className="font-medium text-[10.5px]">快速切换账号：</span>
-              <span className="text-[10px]">共 {accounts.length} 个账号</span>
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {accounts.map((acc) => {
-                const isSelected = acc.email.toLowerCase() === (activeEmail || '').toLowerCase();
-                return (
-                  <button
-                    key={acc.email}
-                    type="button"
-                    onClick={() => handleSwitchAccount(acc.email)}
-                    disabled={isSwitchingAccount}
-                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] transition-all font-mono font-medium active:scale-95 ${
-                      isSelected
-                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-semibold border border-emerald-500/35 shadow-xs'
-                        : 'bg-muted/40 hover:bg-muted text-muted-foreground border border-border/60'
-                    }`}
-                  >
-                    {isSelected && <Check className="h-3 w-3 text-emerald-500 shrink-0" />}
-                    <span className="truncate max-w-[140px]">{acc.label || acc.name || acc.email.split('@')[0]}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Quota Snapshots Mini Bar (纯实时模型双配额直通：5小时额度 + 每周总额度并行跑) */}
-        {(() => {
-          const curAcc = accounts.find((a) => (a.email || '').toLowerCase() === (activeEmail || '').toLowerCase());
-          const displaySnap = quotaSnapshot || curAcc?.quotaSnapshot;
-          if (!displaySnap) return null;
-
-          // Gemini 5h 与周配额
-          const g5hPct = displaySnap.gemini5h?.percent ?? 100;
-          const g5hRed = Math.min(100, Math.max(0, (g5hPct / 20) * 100));
-          const g5hAmber = Math.min(100, Math.max(0, ((g5hPct - 20) / 30) * 100));
-          const g5hGreen = Math.min(100, Math.max(0, ((g5hPct - 50) / 50) * 100));
-
-          const gWeeklyPct = displaySnap.geminiWeekly?.percent ?? g5hPct;
-          const gWRed = Math.min(100, Math.max(0, (gWeeklyPct / 20) * 100));
-          const gWAmber = Math.min(100, Math.max(0, ((gWeeklyPct - 20) / 30) * 100));
-          const gWGreen = Math.min(100, Math.max(0, ((gWeeklyPct - 50) / 50) * 100));
-
-          // Claude / GPT 5h 与周配额
-          const c5hPct = displaySnap.claude5h?.percent ?? 100;
-          const c5hRed = Math.min(100, Math.max(0, (c5hPct / 20) * 100));
-          const c5hAmber = Math.min(100, Math.max(0, ((c5hPct - 20) / 30) * 100));
-          const c5hGreen = Math.min(100, Math.max(0, ((c5hPct - 50) / 50) * 100));
-
-          const cWeeklyPct = displaySnap.claudeWeekly?.percent ?? c5hPct;
-          const cWRed = Math.min(100, Math.max(0, (cWeeklyPct / 20) * 100));
-          const cWAmber = Math.min(100, Math.max(0, ((cWeeklyPct - 20) / 30) * 100));
-          const cWGreen = Math.min(100, Math.max(0, ((cWeeklyPct - 50) / 50) * 100));
-
-          const weeklyResetTime = displaySnap.geminiWeekly?.resetTime || displaySnap.weeklyResetTime;
-
-          return (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-[11px]">
-              {/* Gemini 官方模型双配额卡片 */}
-              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-2">
-                <div className="text-muted-foreground text-[10.5px] flex items-center justify-between pb-1 border-b border-border/40">
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                    <Zap className="h-3 w-3" />
-                    Gemini 官方模型
-                  </span>
-                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold leading-none ${
-                    g5hPct >= 50
-                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
-                      : g5hPct >= 20
-                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
-                  }`}>
-                    {g5hPct >= 50 ? '状态充沛' : g5hPct >= 20 ? '额度偏紧' : '额度告急'}
-                  </span>
-                </div>
-
-                {/* 5小时滚动额度 */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-2.5 w-2.5 text-emerald-500/80" />
-                      5小时滚动额度
-                    </span>
-                    <span className={`font-bold font-mono text-[11px] ${g5hPct < 100 ? 'text-emerald-500 font-semibold' : 'text-foreground'}`}>
-                      {g5hPct}%
-                    </span>
-                  </div>
-                  <div
-                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
-                    title={`5小时额度当前剩余 ${g5hPct}%`}
-                  >
-                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
-                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${g5hRed}%` }} />
-                    </div>
-                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
-                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${g5hAmber}%` }} />
-                    </div>
-                    <div className="relative flex-[5] h-full rounded-full bg-emerald-500/20 overflow-hidden">
-                      <div className="h-full bg-emerald-500 transition-all duration-300 rounded-full" style={{ width: `${g5hGreen}%` }} />
-                    </div>
-                  </div>
-                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <span>5h窗口重置:</span>
-                      {typeof displaySnap.metrics?.fiveHourSteps === 'number' && displaySnap.metrics.fiveHourSteps > 0 && (
-                        <span className="text-[9px] text-emerald-600/80 dark:text-emerald-400/80 font-sans">(5h已调{displaySnap.metrics.fiveHourSteps}步)</span>
-                      )}
-                    </span>
-                    <span className="text-foreground font-medium">{formatDynamicCountdown(displaySnap.gemini5h?.resetTime)}</span>
-                  </div>
-                </div>
-
-                {/* 每周总额度 */}
-                <div className="space-y-1 pt-1 border-t border-border/30">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Calendar className="h-2.5 w-2.5 text-blue-500/80" />
-                      每周总额度
-                    </span>
-                    <span className={`font-bold font-mono text-[11px] ${gWeeklyPct < 100 ? 'text-blue-500 font-semibold' : 'text-foreground'}`}>
-                      {gWeeklyPct}%
-                    </span>
-                  </div>
-                  <div
-                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
-                    title={`每周总额度当前剩余 ${gWeeklyPct}%`}
-                  >
-                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
-                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${gWRed}%` }} />
-                    </div>
-                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
-                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${gWAmber}%` }} />
-                    </div>
-                    <div className="relative flex-[5] h-full rounded-full bg-blue-500/20 overflow-hidden">
-                      <div className="h-full bg-blue-500 transition-all duration-300 rounded-full" style={{ width: `${gWGreen}%` }} />
-                    </div>
-                  </div>
-                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
-                    <span className="flex items-center gap-1">
-                      <span>周重置倒计时:</span>
-                      {typeof displaySnap.metrics?.weeklySteps === 'number' && displaySnap.metrics.weeklySteps > 0 && (
-                        <span className="text-[9px] text-blue-600/80 dark:text-blue-400/80 font-sans">(本周已调{(displaySnap.metrics.weeklySteps / 1000).toFixed(1)}k步)</span>
-                      )}
-                    </span>
-                    <span className="text-foreground font-medium">{formatDynamicCountdown(weeklyResetTime)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Claude / GPT 官方模型双配额卡片 */}
-              <div className="rounded-xl border border-border/50 bg-muted/20 p-2.5 space-y-2">
-                <div className="text-muted-foreground text-[10.5px] flex items-center justify-between pb-1 border-b border-border/40">
-                  <span className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1">
-                    <Zap className="h-3 w-3" />
-                    Claude & GPT 官方模型
-                  </span>
-                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold leading-none ${
-                    c5hPct >= 50
-                      ? 'bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30'
-                      : c5hPct >= 20
-                      ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
-                  }`}>
-                    {c5hPct >= 50 ? '状态充沛' : c5hPct >= 20 ? '额度偏紧' : '额度告急'}
-                  </span>
-                </div>
-
-                {/* 5小时滚动额度 */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-2.5 w-2.5 text-purple-500/80" />
-                      5小时滚动额度
-                    </span>
-                    <span className={`font-bold font-mono text-[11px] ${c5hPct < 100 ? 'text-purple-500 font-semibold' : 'text-foreground'}`}>
-                      {c5hPct}%
-                    </span>
-                  </div>
-                  <div
-                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
-                    title={`5小时额度当前剩余 ${c5hPct}%`}
-                  >
-                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
-                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${c5hRed}%` }} />
-                    </div>
-                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
-                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${c5hAmber}%` }} />
-                    </div>
-                    <div className="relative flex-[5] h-full rounded-full bg-purple-500/20 overflow-hidden">
-                      <div className="h-full bg-purple-500 transition-all duration-300 rounded-full" style={{ width: `${c5hGreen}%` }} />
-                    </div>
-                  </div>
-                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
-                    <span>5h窗口重置:</span>
-                    <span className="text-foreground font-medium">{formatDynamicCountdown(displaySnap.claude5h?.resetTime)}</span>
-                  </div>
-                </div>
-
-                {/* 每周总额度 */}
-                <div className="space-y-1 pt-1 border-t border-border/30">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-muted-foreground flex items-center gap-1">
-                      <Calendar className="h-2.5 w-2.5 text-blue-500/80" />
-                      每周总额度
-                    </span>
-                    <span className={`font-bold font-mono text-[11px] ${cWeeklyPct < 100 ? 'text-blue-500 font-semibold' : 'text-foreground'}`}>
-                      {cWeeklyPct}%
-                    </span>
-                  </div>
-                  <div
-                    className="flex items-center gap-1 h-1.5 w-full shrink-0 p-0.5 rounded-full bg-muted/90 border border-border/60"
-                    title={`每周总额度当前剩余 ${cWeeklyPct}%`}
-                  >
-                    <div className="relative flex-[2] h-full rounded-full bg-rose-500/20 overflow-hidden">
-                      <div className="h-full bg-rose-500 transition-all duration-300 rounded-full" style={{ width: `${cWRed}%` }} />
-                    </div>
-                    <div className="relative flex-[3] h-full rounded-full bg-amber-500/20 overflow-hidden">
-                      <div className="h-full bg-amber-400 transition-all duration-300 rounded-full" style={{ width: `${cWAmber}%` }} />
-                    </div>
-                    <div className="relative flex-[5] h-full rounded-full bg-blue-500/20 overflow-hidden">
-                      <div className="h-full bg-blue-500 transition-all duration-300 rounded-full" style={{ width: `${cWGreen}%` }} />
-                    </div>
-                  </div>
-                  <div className="text-[9.5px] font-mono text-muted-foreground/80 flex items-center justify-between">
-                    <span>周重置倒计时:</span>
-                    <span className="text-foreground font-medium">{formatDynamicCountdown(weeklyResetTime)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* 官方运行机制提示卡条 */}
-              <div className="sm:col-span-2 flex items-start gap-2 p-2 rounded-lg bg-blue-500/5 border border-blue-500/15 text-[10.5px] text-muted-foreground leading-relaxed">
-                <Info className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-semibold text-foreground">Google 官方双配额体系：</span>
-                  5小时额度与每周总额度同时并行扣减。5小时短期额度防集中爆发（用尽后当前窗口期内暂停）；每周总额度控制全周总预算（用尽整周锁定直至下周一刷新）。
-                </div>
-              </div>
-            </div>
-          );
-        })()}
       </div>
 
       {/* 2. SOCKS5 Proxy Master Switch & Status Card */}
@@ -988,6 +811,31 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
 
         {/* Proxy Form Settings */}
         <div className={`space-y-3.5 pt-1 transition-opacity ${proxyEnabled ? 'opacity-100' : 'opacity-60'}`}>
+          {/* URnetwork Login Status Bar */}
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-[11px]">
+            <span className="font-medium text-muted-foreground">URnetwork 登录状态</span>
+            {urnLoginStatus === 'logging_in' ? (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-blue-600 dark:text-blue-400">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                {urnLoginDetail || '正在登录中...'}
+              </span>
+            ) : urnLoginStatus === 'logged_in' || testResult?.success ? (
+              <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
+                ✓ {urnLoginDetail || '已登录并连通'}
+              </span>
+            ) : urnLoginStatus === 'failed' ? (
+              <span className="inline-flex items-center gap-1 font-semibold text-rose-600 dark:text-rose-400">
+                ✕ {urnLoginDetail || '登录/建连失败，请检查账号密码'}
+              </span>
+            ) : userAuth && hasPassword ? (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400">
+                ● 已保存凭证（{proxyStatus?.socksListening ? '端口已监听，点击测速验证登录' : '待唤醒登录'}）
+              </span>
+            ) : (
+              <span className="text-muted-foreground">○ 未配置账号密码</span>
+            )}
+          </div>
+
           {/* URN_USER_AUTH */}
           <div>
             <label className="block font-medium text-foreground text-xs mb-1">

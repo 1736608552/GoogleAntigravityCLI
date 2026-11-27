@@ -754,7 +754,18 @@ export function useSessionStore() {
       msg.sessionId === sessionId
         ? msg
         : { ...msg, sessionId };
-    let updated = [...slot.realtimeMessages, normalizedMessage];
+    let updated: NormalizedMessage[];
+    if (
+      normalizedMessage.kind === 'thinking' &&
+      normalizedMessage.id &&
+      slot.realtimeMessages.some((m) => m.id === normalizedMessage.id)
+    ) {
+      updated = slot.realtimeMessages.map((m) =>
+        m.id === normalizedMessage.id ? normalizedMessage : m
+      );
+    } else {
+      updated = [...slot.realtimeMessages, normalizedMessage];
+    }
     if (updated.length > MAX_REALTIME_MESSAGES) {
       updated = updated.slice(-MAX_REALTIME_MESSAGES);
     }

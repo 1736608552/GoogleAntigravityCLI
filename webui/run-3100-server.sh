@@ -29,17 +29,17 @@ export AGY_HOME="$BASE_DIR/home"
 export WORKSPACES_ROOT="$BASE_DIR"
 export ALLOW_ANY_WORKSPACE_PATH="true"
 export ALLOW_ALL_WORKSPACES="true"
-export AGY_PRINT_TIMEOUT="${AGY_PRINT_TIMEOUT:-24h}"
+export AGY_PRINT_TIMEOUT="${AGY_PRINT_TIMEOUT:-15m}"
 
 cd "$SCRIPT_DIR" || exit 1
-
-# 清理可能残留的孤立端口占用
-lsof -ti:$SERVER_PORT | xargs -r kill -9 2>/dev/null || true
-sleep 1
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] === 启动 3100 端口 Antigravity WebUI Server ==="
 
 while true; do
+  # 每次拉起前清理可能残留的孤立端口占用，避免 EADDRINUSE 循环崩溃
+  lsof -ti:$SERVER_PORT | xargs -r kill -9 2>/dev/null || true
+  sleep 0.5
+
   # 确保主 Web 服务网络直接监听不被 SOCKS5 抖动阻塞；子进程 Antigravity 自带代理注入
   unset ALL_PROXY all_proxy HTTPS_PROXY https_proxy HTTP_PROXY http_proxy
   export NO_PROXY="127.0.0.1,localhost,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
