@@ -99,6 +99,8 @@ export class AntigravitySessionsProvider {
                         const stepType = entry.type;
                         const source = entry.source;
                         const ts = entry.created_at || new Date().toISOString();
+                        // 与实时推送共用同一套确定性 id，保证刷新前后是同一条消息而不是重复卡片
+                        const stepIndex = Number(entry.step_index);
                         if (source === 'USER_EXPLICIT' || stepType === 'USER_INPUT') {
                             pendingToolCalls = [];
                             lastToolCall = null;
@@ -138,7 +140,7 @@ export class AntigravitySessionsProvider {
                         else if (stepType === 'PLANNER_RESPONSE' || stepType === 'AGENT_RESPONSE') {
                             if (entry.thinking) {
                                 messages.push(createNormalizedMessage({
-                                    id: generateMessageId('thk'),
+                                    id: `thinking-${sessionId}-${stepIndex}`,
                                     kind: 'thinking',
                                     role: 'assistant',
                                     content: String(entry.thinking || '').trim(),
@@ -148,8 +150,8 @@ export class AntigravitySessionsProvider {
                                 }));
                             }
                             if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) {
-                                for (const tc of entry.tool_calls) {
-                                    const callId = generateMessageId('call');
+                                for (const [toolIndex, tc] of entry.tool_calls.entries()) {
+                                    const callId = `call-${sessionId}-${stepIndex}-${toolIndex}`;
                                     const toolItem = { id: callId, name: tc.name };
                                     pendingToolCalls.push(toolItem);
                                     lastToolCall = toolItem;
@@ -196,7 +198,7 @@ export class AntigravitySessionsProvider {
                             const toolName = matchedTool ? matchedTool.name : undefined;
                             // All GENERIC steps in transcript are tool execution outputs — never fatal Antigravity errors!
                             messages.push(createNormalizedMessage({
-                                id: generateMessageId('res'),
+                                id: `res-${sessionId}-${stepIndex}-${toolId}`,
                                 kind: 'tool_result',
                                 toolId,
                                 toolName,

@@ -17,7 +17,7 @@ import {
 } from '@/shared/utils.js';
 import type { IProviderRuntime } from '@/shared/interfaces.js';
 import type { AnyRecord, ProviderRuntimeContext, ProviderRuntimeWriter } from '@/shared/types.js';
-import { resolveAntigravityBinary } from './antigravity-auth.provider.js';
+import { resolveAntigravityBinary, resolveAntigravityStateDir } from './antigravity-auth.provider.js';
 import {
   getProxyToggle,
   resolveAntigravityProxyEnv,
@@ -392,6 +392,8 @@ type TurnAttemptParams = {
   accumulatedText: string;
   ws: ProviderRuntimeWriter;
   currentSessionKey: string;
+  /** 应用层稳定会话 id（前端实际使用的那个），用于生成与历史消息严格一致的确定性消息 id */
+  appSessionId?: string;
   abortSignal: AbortSignal;
   onSessionDiscovered: (id: string) => void;
   onTextDelta: (delta: string) => void;
@@ -467,6 +469,217 @@ function ensureAntigravityGlobalRules(workingDir?: string): void {
   }
 }
 
+type TranscriptTailerHandle = { stop: () => void };
+
+/**
+ * 实时兜底跟随器：直接增量跟随 CLI 自己落盘的 transcript.jsonl。
+ *
+ * 为什么需要它：stream-json 的事件字段名在不同 CLI 版本间漂移
+ * （thinking / thinking_delta / tool_name / tool_info 同时存在且位置不一致），
+ * 而历史接口读的是 transcript.jsonl。两条路径读不同来源就会导致
+ * “实时缺思考与工具卡、刷新一下才出现”。
+ *
+ * 这里让实时侧读与历史侧完全同源的数据，并用**确定性 id**
+ * （thinking-<会话>-<step>、call-<会话>-<step>-<n>、res-<会话>-<step>）
+ * 保证流式推送与历史消息是同一条消息，前端按 id 去重后不会重复。
+ */
+function startAntigravityTranscriptTailer(options: {
+  sessionId: () => string;
+  conversationId: () => string | null;
+  isActive: () => boolean;
+  emit: (message: unknown) => void;
+  startFromBeginning: boolean;
+}): TranscriptTailerHandle {
+  const stateDir = resolveAntigravityStateDir();
+  const pollIntervalMs = 600;
+
+  let stopped = false;
+  let currentPath: string | null = null;
+  let offset = 0;
+  let pendingBytes = Buffer.alloc(0);
+  let lastToolIdByStep = new Map<number, string>();
+  const emittedThinking = new Set<string>();
+
+  const resolvePath = (conversationId: string): string =>
+    path.join(stateDir, 'brain', conversationId, '.system_generated', 'logs', 'transcript.jsonl');
+
+  const handleEntry = (rawLine: string) => {
+    let entry: AnyRecord;
+    try {
+      entry = JSON.parse(rawLine);
+    } catch {
+      return;
+    }
+    if (!entry || typeof entry !== 'object') return;
+
+    const stepIndex = Number(entry.step_index);
+    if (!Number.isFinite(stepIndex)) return;
+    const stepType = String(entry.type || '').toUpperCase();
+    const sessionId = options.sessionId();
+
+    if (stepType === 'USER_INPUT') {
+      lastToolIdByStep = new Map();
+      return;
+    }
+
+    if (stepType === 'PLANNER_RESPONSE' || stepType === 'AGENT_RESPONSE') {
+      if (typeof entry.thinking === 'string' && entry.thinking.trim()) {
+        const thinkingId = `thinking-${sessionId}-${stepIndex}`;
+        // 同一 step 的思考只会随着流式增量变长，直接按 id 覆盖推送即可
+        const thinkingText = entry.thinking.trim();
+        if (!emittedThinking.has(`${thinkingId}\u0000${thinkingText}`)) {
+          emittedThinking.add(`${thinkingId}\u0000${thinkingText}`);
+          options.emit(createNormalizedMessage({
+            id: thinkingId,
+            kind: 'thinking',
+            role: 'assistant',
+            content: thinkingText,
+            sessionId,
+            provider: 'antigravity',
+          }));
+        }
+      }
+
+      const toolCalls = Array.isArray(entry.tool_calls) ? (entry.tool_calls as AnyRecord[]) : [];
+      toolCalls.forEach((toolCall, index: number) => {
+        const toolName = String(toolCall?.name || '').trim();
+        if (!toolName) return;
+        const toolId = `call-${sessionId}-${stepIndex}-${index}`;
+        lastToolIdByStep.set(stepIndex, toolId);
+        options.emit(createNormalizedMessage({
+          id: toolId,
+          kind: 'tool_use',
+          role: 'assistant',
+          toolName,
+          toolInput: toolCall.args || toolCall.parameters || toolCall.input || {},
+          toolId,
+          sessionId,
+          provider: 'antigravity',
+        }));
+      });
+      return;
+    }
+
+    // GENERIC 步骤承载的是一次工具执行的实际输出
+    if (stepType === 'GENERIC') {
+      const rawMedia = Array.isArray(entry.media) ? (entry.media as AnyRecord[]) : [];
+      const rawContent = entry.error || entry.content || '';
+      if (!rawContent && rawMedia.length === 0) return;
+
+      let outStr = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+      for (const media of rawMedia) {
+        if (media?.uri && typeof media.uri === 'string') {
+          const isImage = !media.mime_type || String(media.mime_type).startsWith('image/');
+          if (isImage) outStr += `\n\n![生成的图片](${media.uri})\n`;
+        }
+      }
+
+      const isError = Boolean(entry.error) || entry.status === 'ERROR' || outStr.includes('TOOL_ERROR');
+      options.emit(createNormalizedMessage({
+        id: `res-${sessionId}-${stepIndex}`,
+        kind: 'tool_result',
+        role: 'assistant',
+        toolId: lastToolIdByStep.get(stepIndex) || `call-${sessionId}-${stepIndex}-0`,
+        toolResult: { content: outStr, isError },
+        content: outStr,
+        sessionId,
+        provider: 'antigravity',
+      }));
+    }
+  };
+
+  const drain = () => {
+    if (stopped) return;
+    const conversationId = options.conversationId();
+    if (!conversationId) return;
+
+    const transcriptPath = resolvePath(conversationId);
+
+    if (transcriptPath !== currentPath) {
+      let initialSize = 0;
+      try {
+        if (!fs.existsSync(transcriptPath)) return;
+        initialSize = fs.statSync(transcriptPath).size;
+      } catch {
+        return;
+      }
+      currentPath = transcriptPath;
+      // 续跑老会话时从当前末尾开始跟，绝不把历史思考重推一遍；
+      // 全新会话的文件是从本轮才开始写的，可以从头读。
+      offset = options.startFromBeginning ? 0 : initialSize;
+      pendingBytes = Buffer.alloc(0);
+      if (offset >= initialSize) return;
+    }
+
+    let size = 0;
+    try {
+      size = fs.statSync(transcriptPath).size;
+    } catch {
+      return;
+    }
+    if (size < offset) {
+      offset = 0;
+      pendingBytes = Buffer.alloc(0);
+    }
+    if (size === offset) return;
+
+    let chunk: Buffer;
+    try {
+      const fd = fs.openSync(transcriptPath, 'r');
+      try {
+        chunk = Buffer.alloc(size - offset);
+        fs.readSync(fd, chunk, 0, chunk.length, offset);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return;
+    }
+
+    offset += chunk.length;
+    pendingBytes = Buffer.concat([pendingBytes, chunk]);
+
+    // 只消费到最后一个换行，半行留在缓冲区，避免多字节字符被截断
+    const lastNewline = pendingBytes.lastIndexOf(0x0a);
+    if (lastNewline < 0) return;
+    const complete = pendingBytes.subarray(0, lastNewline).toString('utf8');
+    pendingBytes = pendingBytes.subarray(lastNewline + 1);
+
+    for (const line of complete.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed) handleEntry(trimmed);
+    }
+  };
+
+  const timer = setInterval(() => {
+    if (stopped) return;
+    if (!options.isActive()) {
+      stop();
+      return;
+    }
+    try {
+      drain();
+    } catch (error) {
+      console.error('[Antigravity Runtime] transcript tailer failed:', error);
+    }
+  }, pollIntervalMs);
+  timer.unref?.();
+
+  function stop(): void {
+    if (stopped) return;
+    // 收尾时再读一次，保证回合结束前最后写入的思考与工具卡不丢
+    try {
+      drain();
+    } catch {
+      /* 收尾读取失败不影响结算 */
+    }
+    stopped = true;
+    clearInterval(timer);
+  }
+
+  return { stop };
+}
+
 /**
  * Executes a single Antigravity CLI process turn.
  * Implements delta deduplication against `accumulatedText` so any re-generated text
@@ -489,6 +702,7 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       accumulatedText,
       ws,
       currentSessionKey,
+      appSessionId,
       abortSignal,
       onSessionDiscovered,
       onTextDelta,
@@ -621,6 +835,18 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
     let turnUsage: AnyRecord | undefined = undefined;
     let spawnedSubagentsCount = 0;
 
+    // 思考 / 工具卡实时兜底：跟随 CLI 自己落盘的 transcript.jsonl 增量。
+    // 该文件与历史接口同源，不受 stream-json 字段漂移影响，因此思考与工具卡
+    // 无需手动刷新即可出现；消息 id 与历史解析器一致，刷新后不会重复。
+    const transcriptTailer = startAntigravityTranscriptTailer({
+      sessionId: () => activeSessionId,
+      conversationId: () => turnConversationId || null,
+      isActive: () => !isSettled,
+      emit: (message) => ws.send(message),
+      // 续跑老会话时从文件末尾开始跟，避免把历史思考重推一遍
+      startFromBeginning: !capturedSessionId,
+    });
+
     const onAbort = () => {
       if (watchdogTimer) {
         clearInterval(watchdogTimer);
@@ -637,6 +863,7 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       if (isSettled) return;
       isSettled = true;
       abortSignal.removeEventListener('abort', onAbort);
+      transcriptTailer.stop();
 
       if (watchdogTimer) {
         clearInterval(watchdogTimer);
@@ -662,6 +889,9 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
     let lastActiveToolCall: { id: string; name: string } | null = null;
     let turnStepCounter = 0;
     const accumulatedThoughtsByStep = new Map<number, string>();
+    const lastEmittedThoughtByStep = new Map<number, string>();
+    // 消息 id 必须基于前端使用的稳定应用会话 id，才能和历史解析器生成同一条消息
+    const activeSessionId = appSessionId || currentSessionKey;
 
     const processOutputLine = (line: string, allowAfterSettled = false) => {
       if ((!allowAfterSettled && isSettled) || !line || !line.trim()) return;
@@ -741,74 +971,128 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
         }
 
         // Thought / reasoning（置于 tool_info 之前，确保带工具调用的步骤也能实时推送思考内容）
-        const thoughtDelta =
-          update.thinking_delta ||
-          update.thought_delta ||
-          update.reasoning_delta ||
-          '';
-        const fullThought =
-          update.thought ||
-          update.thinking ||
-          update.reasoning ||
-          ((stepType.includes('think') || stepType.includes('reason'))
-            ? (update.content || update.text_delta)
-            : '');
+        // 字段名按 CLI 实际协议做多路兼容：thinking / thought / reasoning 为全量，
+        // thinking_delta / thought_delta / reasoning_delta 为增量；thinking 步骤的 content 也是思考正文。
+        const stepNumber = Number(stepIdx);
+        const stepKey = Number.isFinite(stepNumber) ? stepNumber : turnStepCounter;
+        const isThinkingStep = stepType.includes('think') || stepType.includes('reason');
+        const thoughtDelta = String(
+          update.thinking_delta || update.thought_delta || update.reasoning_delta || '',
+        );
+        const fullThought = update.thinking || update.thought || update.reasoning || '';
+        const thoughtFromContent = isThinkingStep ? (update.content || update.text || '') : '';
+
         let mergedThought = '';
+        const previousThought = accumulatedThoughtsByStep.get(stepKey) || '';
         if (typeof fullThought === 'string' && fullThought.trim()) {
+          // thinking 是全量文本：随流式推进变长，直接以最新一次为准
           mergedThought = fullThought.trim();
-          accumulatedThoughtsByStep.set(Number(stepIdx), mergedThought);
-        } else if (typeof thoughtDelta === 'string' && thoughtDelta) {
-          const prevThought = accumulatedThoughtsByStep.get(Number(stepIdx)) || '';
-          mergedThought = prevThought + thoughtDelta;
-          accumulatedThoughtsByStep.set(Number(stepIdx), mergedThought);
+        } else if (thoughtDelta) {
+          mergedThought = previousThought + thoughtDelta;
+        } else if (typeof thoughtFromContent === 'string' && thoughtFromContent.trim()) {
+          mergedThought = thoughtFromContent.trim();
         }
         if (mergedThought.trim()) {
-          ws.send(createNormalizedMessage({
-            id: `thinking-${activeSession}-${stepIdx}`,
-            kind: 'thinking',
-            role: 'assistant',
-            content: mergedThought.trim(),
-            sessionId: activeSession,
-            provider: 'antigravity',
-          }));
+          accumulatedThoughtsByStep.set(stepKey, mergedThought);
+          if (lastEmittedThoughtByStep.get(stepKey) !== mergedThought) {
+            lastEmittedThoughtByStep.set(stepKey, mergedThought);
+            ws.send(createNormalizedMessage({
+              id: `thinking-${activeSessionId}-${stepKey}`,
+              kind: 'thinking',
+              role: 'assistant',
+              content: mergedThought,
+              sessionId: activeSession,
+              provider: 'antigravity',
+            }));
+          }
         }
 
         // Tool calls and tool execution results
-        const toolInfo = update.tool_info as AnyRecord | undefined;
-        if (toolInfo && toolInfo.name) {
-          if (toolInfo.name === 'invoke_subagent' || toolInfo.name === 'manage_subagents' || toolInfo.name === 'define_subagent') {
+        // CLI 协议里工具名有两条来源：与 tool_info 同级的 tool_name，以及 tool_info.name；
+        // 另有把整批调用放进 tool_calls[] 的版本。这里全部兼容，避免工具卡在实时流里整段丢失。
+        const toolInfo = (update.tool_info || update.toolInfo) as AnyRecord | undefined;
+        const inlineToolCalls = Array.isArray(update.tool_calls)
+          ? (update.tool_calls as AnyRecord[])
+          : (Array.isArray(toolInfo?.tool_calls) ? (toolInfo?.tool_calls as AnyRecord[]) : []);
+        const singleToolName = String(
+          toolInfo?.name
+          || toolInfo?.tool_name
+          || update.tool_name
+          || update.toolName
+          || '',
+        ).trim();
+
+        const toolCallList: Array<{ name: string; input: unknown; id: string }> = [];
+        if (singleToolName) {
+          toolCallList.push({
+            name: singleToolName,
+            input: toolInfo?.parameters || toolInfo?.args || toolInfo?.input || toolInfo?.arguments
+              || update.parameters || update.args || {},
+            // 确定性 id：与历史解析器完全一致，刷新前后的工具卡是同一条消息
+            id: `call-${activeSessionId}-${stepKey}-0`,
+          });
+        } else if (inlineToolCalls.length > 0) {
+          inlineToolCalls.forEach((toolCall, index) => {
+            const name = String(toolCall?.name || toolCall?.tool_name || '').trim();
+            if (!name) return;
+            toolCallList.push({
+              name,
+              input: toolCall.args || toolCall.parameters || toolCall.input || toolCall.arguments || {},
+              id: `call-${activeSessionId}-${stepKey}-${index}`,
+            });
+          });
+        }
+
+        let emittedToolThisStep = false;
+        for (const toolCall of toolCallList) {
+          if (toolCall.name === 'invoke_subagent' || toolCall.name === 'manage_subagents' || toolCall.name === 'define_subagent') {
             spawnedSubagentsCount++;
           }
-          // 采用稳定确定性的 toolId，与持久化历史严格对齐，彻底消除消息合并重复
-          const toolId = (update.tool_call_id as string) || (update.id as string) || `call-step-${stepIdx}`;
-          let parsedInput = toolInfo.parameters || toolInfo.input || toolInfo.args || {};
+
+          let parsedInput: unknown = toolCall.input;
           if (typeof parsedInput === 'string') {
-            try { parsedInput = JSON.parse(parsedInput); } catch (_) {}
+            try { parsedInput = JSON.parse(parsedInput); } catch (_) { /* 保留原始字符串 */ }
           }
 
-          lastActiveToolCall = { id: toolId, name: String(toolInfo.name) };
+          lastActiveToolCall = { id: toolCall.id, name: toolCall.name };
+          emittedToolThisStep = true;
 
-          if (!seenToolCallIds.has(toolId)) {
-            seenToolCallIds.add(toolId);
+          if (!seenToolCallIds.has(toolCall.id)) {
+            seenToolCallIds.add(toolCall.id);
             ws.send(createNormalizedMessage({
+              id: toolCall.id,
               kind: 'tool_use',
-              toolName: String(toolInfo.name),
+              role: 'assistant',
+              toolName: toolCall.name,
               toolInput: parsedInput,
-              toolId,
+              toolId: toolCall.id,
               sessionId: activeSession,
               provider: 'antigravity',
             }));
           }
 
-          if (toolInfo.output || update.output || toolInfo.error || update.error || update.status === 'ERROR' || update.media || toolInfo.media) {
-            const isError = Boolean(toolInfo.error || update.error || update.status === 'ERROR');
-            const rawContent = toolInfo.error || update.error || toolInfo.output || update.output || '';
+          const toolOutputRaw = toolInfo?.output
+            ?? update.output
+            ?? (update.result as AnyRecord | undefined)?.output
+            ?? '';
+          const toolError = toolInfo?.error || update.error;
+          const toolMedia = update.media
+            || toolInfo?.media
+            || (update.result as AnyRecord | undefined)?.media;
+
+          if (
+            (toolOutputRaw !== '' && toolOutputRaw !== undefined && toolOutputRaw !== null)
+            || toolError
+            || update.status === 'ERROR'
+            || toolMedia
+          ) {
+            const isError = Boolean(toolError || update.status === 'ERROR');
+            const rawContent = toolError || toolOutputRaw || '';
             let outStr = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
 
             // 实时提取底层返回的媒体图片并在聊天框展示
-            const rawMedia = update.media || toolInfo.media || (update.result && (update.result as any).media);
-            if (Array.isArray(rawMedia) && rawMedia.length > 0) {
-              for (const m of rawMedia) {
+            if (Array.isArray(toolMedia) && toolMedia.length > 0) {
+              for (const m of toolMedia) {
                 if (m?.uri && typeof m.uri === 'string') {
                   const isImg = !m.mime_type || m.mime_type.startsWith('image/');
                   if (isImg) {
@@ -827,9 +1111,10 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
             }
 
             ws.send(createNormalizedMessage({
+              id: `res-${activeSessionId}-${stepKey}-${toolCall.id}`,
               kind: 'tool_result',
-              toolName: String(toolInfo.name),
-              toolId,
+              toolName: toolCall.name,
+              toolId: toolCall.id,
               toolResult: { content: outStr, isError },
               content: outStr,
               sessionId: activeSession,
@@ -837,12 +1122,11 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
             }));
             lastActiveToolCall = null;
           }
-          return;
         }
 
         // 核心修复：处理独立工具执行结果（如生图完成事件 step_type === 'generic' 或包含 media）
         const isGenericOrResult = stepType === 'generic' || stepType === 'step_result' || Boolean(update.media) || (Boolean(update.output) && !toolInfo);
-        if (isGenericOrResult && (lastActiveToolCall || Boolean(update.media))) {
+        if (isGenericOrResult && !emittedToolThisStep && (lastActiveToolCall || Boolean(update.media))) {
           const rawContent = update.error || update.output || update.content || '';
           let outStr = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
           const isError = Boolean(
@@ -873,10 +1157,11 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
             }
           }
 
-          const targetToolId = lastActiveToolCall?.id || `call-step-${stepIdx}`;
+          const targetToolId = lastActiveToolCall?.id || `call-${activeSessionId}-${stepKey}-0`;
           const targetToolName = lastActiveToolCall?.name || 'generate_image';
 
           ws.send(createNormalizedMessage({
+            id: `res-${activeSessionId}-${stepKey}-${targetToolId}`,
             kind: 'tool_result',
             toolName: targetToolName,
             toolId: targetToolId,
@@ -911,10 +1196,11 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
           turnEmitted += delta;
           onTextDelta(delta);
         } else if (
+          // 注意：同一 step 里 CLI 会把「思考 + 正文 + 工具调用」打包在一起，
+          // 因此这里绝不能再以「带 tool_info 就跳过正文」为条件，否则正文永远不实时。
           (!stepType || stepType === 'agent_response' || stepType === 'planner_response') &&
           typeof update.content === 'string' &&
-          update.content &&
-          !update.tool_info
+          update.content
         ) {
           const content = update.content;
           if (content.startsWith(turnEmitted) && content.length > turnEmitted.length) {
@@ -1108,6 +1394,7 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       if (isSettled) return;
       isSettled = true;
       abortSignal.removeEventListener('abort', onAbort);
+      transcriptTailer.stop();
 
       if (quotaErrorDetails) {
         reject(new QuotaExhaustedError(quotaErrorDetails.message, quotaErrorDetails.resetMsg, quotaErrorDetails.rawText));
@@ -1133,6 +1420,7 @@ export function runAntigravityTurnOnce(params: TurnAttemptParams): Promise<TurnA
       if (isSettled) return;
       isSettled = true;
       abortSignal.removeEventListener('abort', onAbort);
+      transcriptTailer.stop();
       reject(err);
     });
   });
@@ -1304,6 +1592,7 @@ export async function spawnAntigravity(
           accumulatedText,
           ws,
           currentSessionKey: capturedSessionId || sessionId || processKey,
+          appSessionId: sessionId || processKey,
           abortSignal: abortController.signal,
           onSessionDiscovered: (id: string) => {
             registerSession(id);
@@ -1533,6 +1822,7 @@ export async function spawnAntigravity(
             accumulatedText,
             ws,
             currentSessionKey: capturedSessionId || sessionId || processKey,
+            appSessionId: sessionId || processKey,
             abortSignal: abortController.signal,
             onSessionDiscovered: (id: string) => {
               registerSession(id);
