@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Google Antigravity Web UI — 自动保活脚本(单例锁,防多实例)
 cd "$(dirname "$0")"
-export PATH="/vol5/@apphome/trim.openclaw/data/home/.nvm/versions/node/v24.19.0/bin:/vol5/@apphome/claude code/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+# node 定位由 webui/run-3100-server.sh 统一动态探测（v24 大版本通配，小版本升级无需改脚本）；
+# 这里只保证基础系统命令可用，不含任何带小版本号的 node 死路径。
+export PATH="/var/apps/nodejs_v24/target/bin:/var/apps/nodejs_v22/target/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export HOME="$(pwd)/home"
 
 PORT="${PORT:-3100}"

@@ -13,7 +13,30 @@ fi
 echo "$$" > "$PIDFILE"
 trap 'rm -f "$PIDFILE"' EXIT INT TERM
 
-export PATH="/vol5/@apphome/trim.openclaw/data/home/.nvm/versions/node/v24.19.0/bin:/vol5/@apphome/claude code/.npm-global/bin:$PATH"
+# ---------- 动态定位 node：只认 v24 大版本，小版本升级（v24.x.x）无需改脚本 ----------
+# 顺序：PATH 中已有 node(主版本>=20) → 无版本号的固定安装路径 → nvm 风格 v24.* glob 取最高版
+resolve_node() {
+  local c maj
+  c="$(command -v node 2>/dev/null)"
+  if [ -n "$c" ] && [ -x "$c" ]; then
+    maj="$("$c" -v 2>/dev/null | sed 's/^v//' | cut -d. -f1)"
+    case "$maj" in ''|*[!0-9]*) ;; *) [ "$maj" -ge 20 ] && { printf '%s\n' "$c"; return 0; } ;; esac
+  fi
+  for c in /var/apps/nodejs_v24/target/bin/node /var/apps/nodejs_v22/target/bin/node; do
+    [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+  done
+  c="$(ls -v /vol*/*/*/data/home/.nvm/versions/node/v24.*/bin/node /vol*/*/.nvm/versions/node/v24.*/bin/node 2>/dev/null | tail -1)"
+  [ -n "$c" ] && [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
+  return 1
+}
+
+NODE_BIN="$(resolve_node)"
+if [ -z "$NODE_BIN" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [FATAL] 未找到可用的 node（v24.x / nodejs_v24 / nodejs_v22 均不存在），停止启动。"
+  exit 1
+fi
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] [node] 使用: $NODE_BIN ($("$NODE_BIN" -v 2>/dev/null))"
+export PATH="$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 export PATH="$BASE_DIR/bin:$PATH"
@@ -45,7 +68,7 @@ while true; do
   export NO_PROXY="127.0.0.1,localhost,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
   export no_proxy="127.0.0.1,localhost,::1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12"
 
-  node dist-server/server/index.js
+  "$NODE_BIN" dist-server/server/index.js
   EXIT_CODE=$?
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] 3100 server 退出 (code: $EXIT_CODE)，2秒后重启..."
   sleep 2
