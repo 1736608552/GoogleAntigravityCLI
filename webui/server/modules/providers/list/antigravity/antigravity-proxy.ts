@@ -257,15 +257,20 @@ export function getProxyStatus(): UrnProxyStatus {
 }
 
 export function restartProxy(): { ok: boolean; killed: number; message: string } {
-  stopUrnSocksInstant();
+  stopUrnSocksInstant({ skipCloudCleanup: true });
   const toggle = getProxyToggle();
-  if (toggle === 'yes') {
-    startUrnSocksInstant();
+  if (toggle !== 'yes') {
+    return {
+      ok: false,
+      killed: 0,
+      message: '当前处于直连模式，请先切换为「🌐 代理」模式后再启动代理',
+    };
   }
+  const startRes = startUrnSocksInstant();
   return {
-    ok: true,
+    ok: startRes.ok,
     killed: 1,
-    message: '已优雅重启 SOCKS5 代理并重新同步最新配置',
+    message: startRes.message || '已优雅重启 SOCKS5 代理并重新同步最新配置',
   };
 }
 
@@ -418,7 +423,7 @@ export async function cleanupCloudSocksClients(): Promise<number> {
   }
 }
 
-export function stopUrnSocksInstant(): { ok: boolean; message: string; socksListening: boolean } {
+export function stopUrnSocksInstant(options?: { skipCloudCleanup?: boolean }): { ok: boolean; message: string; socksListening: boolean } {
   stopProxyHealthWatchdog();
   try {
     let pids: number[] = [];
@@ -463,8 +468,14 @@ export function stopUrnSocksInstant(): { ok: boolean; message: string; socksList
       }
     }
 
-    // 4. 终极双保险：异步调用云端 API 确保所有 SOCKS5 挂起设备被 100% 连根拔除，绝不留任何残留
-    cleanupCloudSocksClients().catch(() => {});
+    // 4. 仅在非立即重启场景下，再延迟核查清理云端挂起设备（若期间已有新进程监听则绝不误删）
+    if (!options?.skipCloudCleanup) {
+      setTimeout(() => {
+        if (!isSocksListening(19999)) {
+          cleanupCloudSocksClients().catch(() => {});
+        }
+      }, 1500);
+    }
   } catch (err: any) {
     console.warn('[Scale-to-Zero] 优雅停止代理异常:', err?.message);
   }
@@ -722,8 +733,8 @@ export async function rotateNodeAndVerify(maxAttempts = 5): Promise<boolean> {
         }
       } catch (_) {}
 
-      // 异步通知官方云端注销旧客户端会话（避免被分配到同一挂起设备）
-      cleanupCloudSocksClients().catch(() => {});
+      // 等待云端彻底注销旧设备后再启动新进程，防止异步竞态误杀新 clientID 触发 401
+      await cleanupCloudSocksClients().catch(() => {});
 
       // 等待 150ms 端口释放
       await new Promise((r) => setTimeout(r, 150));

@@ -304,7 +304,7 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
     setUrnLoginDetail('正在登录 URnetwork 并建立多节点连接...');
     setSuccessMsg('⏳ 正在登录 URnetwork 并建立连接，请稍候...');
     setErrorMsg(null);
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 8; i += 1) {
       await new Promise((r) => setTimeout(r, 1500));
       try {
         const testRes = await api.providers.testAntigravityProxy();
@@ -325,9 +325,9 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
       }
     }
     setUrnLoginStatus('failed');
-    setUrnLoginDetail('节点建连超时或鉴权失败 (401)，请核对账号密码');
+    setUrnLoginDetail('节点建连较慢或暂不可达，请尝试切换国家（如 United States）或点击测速');
     setSuccessMsg(null);
-    setErrorMsg('URnetwork 登录/建连未在预期内完成，请检查代理账号密码是否正确或点击测速查看详情');
+    setErrorMsg('代理节点建连超时，建议切换国家（如 United States）后重试，或点击「测速」查看详细状态');
     void loadAllSettings();
   }, [loadAllSettings]);
 
@@ -596,8 +596,8 @@ export default function AntigravityProxySection({ onNavigateToAccounts }: Antigr
                   setProxyEnabled(true);
                   try {
                     await api.providers.saveAntigravityProxySettings({ proxy: { enabled: true, mode: 'yes' } });
-                    setSuccessMsg('网络连接模式已切换为：🌐 SOCKS5 代理模式');
-                    void loadAllSettings();
+                    await api.providers.restartAntigravityProxy();
+                    void waitForUrnLoginCompletion();
                   } catch {}
                 }}
                 className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-all ${
