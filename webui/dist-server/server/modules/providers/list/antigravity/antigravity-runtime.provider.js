@@ -1359,6 +1359,7 @@ export function runAntigravityTurnOnce(params) {
         // 诊断日志、重试警告、stderr 噪声不算进展 —— 否则上游挂死但 CLI 持续吐
         // 重试警告时看门狗会被无限续命（正是「超时一直干等」的根因）。
         let lastProgressTime = Date.now();
+        let stallNoticeSent = false;
         let lastForwardedErrorText = '';
         let lastForwardedErrorTime = 0;
         const isBoostMode = Boolean((command && /^\/boost\b/i.test(command.trim())) ||
@@ -1379,10 +1380,18 @@ export function runAntigravityTurnOnce(params) {
             const nowMs = Date.now();
             const silentMs = nowMs - lastActivityTime; // 字节级静默（stdout/stderr 全无输出）
             const stalledMs = nowMs - lastProgressTime; // 实质进展停滞（可能仍在反复吐重试警告）
-            const inactivityTimeoutMs = (isBaseLongRunningMode || spawnedSubagentsCount > 0 || lastActiveToolCall !== null)
+            // 工具执行中（bash 长命令 / 生图 / 装依赖等）不算停滞：CLI 正在本地干活，
+            // 本来就可能安静好几分钟。此时只有进程完全无字节输出（silentMs）超过上限才会兜底。
+            const toolInFlight = Boolean(lastActiveToolCall);
+            const inactivityTimeoutMs = (isBaseLongRunningMode || spawnedSubagentsCount > 0 || toolInFlight)
                 ? 1_800_000
                 : 600_000;
-            if (silentMs > inactivityTimeoutMs || stalledMs > inactivityTimeoutMs) {
+            // 停滞预警只进服务端日志（不打扰对话流）
+            if (!stallNoticeSent && !isSettled && !toolInFlight && stalledMs > 120_000) {
+                stallNoticeSent = true;
+                console.warn(`[Antigravity Runtime] ⏳ 已 ${Math.round(stalledMs / 1000)}s 无实质进展（上游可能卡住）`);
+            }
+            if ((!toolInFlight && stalledMs > inactivityTimeoutMs) || silentMs > inactivityTimeoutMs) {
                 if (watchdogTimer) {
                     clearInterval(watchdogTimer);
                     watchdogTimer = null;
