@@ -378,6 +378,8 @@ export const api = {
       get(`/api/providers/antigravity/quota${query({ force, email })}`),
     antigravityQuotaSnapshot: (model?: string, force?: boolean, email?: string) =>
       get(`/api/providers/antigravity/quota/snapshot${query({ model, force, email })}`),
+    claimAntigravityBankedReset: (resetId: string, email?: string) =>
+      post('/api/providers/antigravity/quota/claim-reset', { resetId, email }),
     getAntigravityProxyStatus: () => get('/api/providers/antigravity/proxy/status'),
     getAntigravityUrnBalance: async (forceRefresh?: boolean) => {
       try {

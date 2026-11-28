@@ -30,6 +30,27 @@ const isExternalHref = (href?: string): boolean =>
 // Strip a trailing `:line` / `:line:col` suffix (e.g. `src/foo.ts:130`).
 const stripLineSuffix = (value: string): string => value.replace(/:\d+(?::\d+)?$/, '');
 
+const VIDEO_EXT_PATTERN = /\.(mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i;
+const AUDIO_EXT_PATTERN = /\.(mp3|wav|ogg|m4a|aac|flac)(?:[?#].*)?$/i;
+const IMAGE_EXT_PATTERN = /\.(png|jpe?g|gif|webp|svg|bmp|ico)(?:[?#].*)?$/i;
+
+const resolveLocalMediaUrl = (rawSrc: string): string => {
+  if (rawSrc.startsWith('file://') || (rawSrc.startsWith('/') && !rawSrc.startsWith('/api/'))) {
+    const cleanPath = rawSrc.replace(/^file:\/\//, '');
+    return `/api/media/file?path=${encodeURIComponent(cleanPath)}`;
+  }
+  return rawSrc;
+};
+
+const getMediaKind = (rawSrc: string): 'video' | 'audio' | 'image' => {
+  if (VIDEO_EXT_PATTERN.test(rawSrc)) return 'video';
+  if (AUDIO_EXT_PATTERN.test(rawSrc)) return 'audio';
+  return 'image';
+};
+
+const isPlayableOrImageMedia = (rawPath: string): boolean =>
+  VIDEO_EXT_PATTERN.test(rawPath) || AUDIO_EXT_PATTERN.test(rawPath) || IMAGE_EXT_PATTERN.test(rawPath);
+
 // A usable file path contains a separator or a filename with an extension.
 const looksLikeFilePath = (value?: string): value is string => {
   if (!value) {
@@ -278,13 +299,26 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
         const fileRef = looksLikeFilePath(href) ? href : looksLikeFilePath(linkText) ? linkText : undefined;
 
         if (fileRef && !isExternalHref(href)) {
+          const cleanRef = stripLineSuffix(fileRef);
+          if (isPlayableOrImageMedia(cleanRef)) {
+            return (
+              <a
+                href={resolveLocalMediaUrl(cleanRef)}
+                className="text-blue-600 hover:underline dark:text-blue-400"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {linkChildren}
+              </a>
+            );
+          }
           return (
             <a
               href={href || fileRef}
               className="cursor-pointer text-blue-600 hover:underline dark:text-blue-400"
               onClick={(event) => {
                 event.preventDefault();
-                openFileInEditor(stripLineSuffix(fileRef));
+                openFileInEditor(cleanRef);
               }}
             >
               {linkChildren}
@@ -306,11 +340,46 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
       img: ({ src, alt, title }: { src?: string; alt?: string; title?: string }) => {
         if (!src) return null;
 
-        let resolvedSrc = src;
-        // 支持各类协议与服务器本地文件路径转换
-        if (src.startsWith('file://') || (src.startsWith('/') && !src.startsWith('/api/'))) {
-          const cleanPath = src.replace(/^file:\/\//, '');
-          resolvedSrc = `/api/media/file?path=${encodeURIComponent(cleanPath)}`;
+        const resolvedSrc = resolveLocalMediaUrl(src);
+        const mediaKind = getMediaKind(src);
+
+        if (mediaKind === 'video') {
+          return (
+            <span className="my-3 block max-w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-zinc-50/50 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/50">
+              <video
+                src={resolvedSrc}
+                controls
+                playsInline
+                preload="metadata"
+                title={title || alt || '视频预览'}
+                className="max-h-[540px] w-full bg-black object-contain"
+              />
+              <span className="flex items-center justify-between gap-2 border-t border-zinc-100 bg-white/70 px-3 py-1.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-400">
+                <span className="truncate">🎬 {alt || '生成的视频'}</span>
+                <a
+                  href={resolvedSrc}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  新窗口播放 / 下载
+                </a>
+              </span>
+            </span>
+          );
+        }
+
+        if (mediaKind === 'audio') {
+          return (
+            <span className="my-3 block max-w-full overflow-hidden rounded-xl border border-zinc-200/80 bg-zinc-50/50 p-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/50">
+              <audio src={resolvedSrc} controls preload="metadata" className="w-full" />
+              {alt && (
+                <span className="mt-1.5 block text-xs text-zinc-600 dark:text-zinc-400">
+                  🎵 {alt}
+                </span>
+              )}
+            </span>
+          );
         }
 
         return (

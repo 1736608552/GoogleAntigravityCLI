@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import {
   antigravityRuntime,
+  ensureAgentTutorial,
   resolveAntigravityPermissionArgs,
   resolveAntigravityPermissionPolicy,
   runAntigravityTurnOnce,
@@ -93,6 +96,11 @@ test('runAntigravityTurnOnce does not prematurely settle during async subagent s
       return proc;
     }) as any,
   });
+
+  const spawnWaitStart = Date.now();
+  while (capturedArgs.length === 0 && Date.now() - spawnWaitStart < 3000) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
 
   // 确认默认模式只传 --sandbox 而非 --dangerously-skip-permissions，且不再向用户 prompt 注入冗长策略文本
   assert.ok(capturedArgs.includes('--sandbox'));
@@ -318,4 +326,168 @@ test('createAntigravityPermissionGate bridges PreToolUse hook via IPC and cleans
   const gateDir = gate.gateDir;
   gate.dispose();
   assert.equal(fs.existsSync(gateDir), false, 'gateDir must be deleted after dispose');
+});
+
+test('ensureAgentTutorial prunes legacy workspace rules, unnumbered thinking locks, and keeps repository guidance intact', () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-tutorial-test-'));
+  try {
+    const homeDir = path.join(tmpRoot, 'home');
+    const workspaceRoot = path.join(tmpRoot, 'repo');
+    const workspaceApp = path.join(workspaceRoot, 'webui');
+    fs.mkdirSync(path.join(homeDir, '.gemini', 'config'), { recursive: true });
+    fs.mkdirSync(workspaceApp, { recursive: true });
+
+    const authorityFile = path.join(homeDir, '.gemini', 'config', 'GEMINI.md');
+    fs.writeFileSync(
+      authorityFile,
+      [
+        '# Antigravity 全局语言与思维规范',
+        '',
+        '## 1. 深度思考过程',
+        '- **必须全程使用中文思考**：严禁英文思考',
+        '',
+        '## 2. 回复与交互',
+        '- 始终使用中文回复用户',
+        '',
+        '## 3. 自定义安全规范',
+        '- 保留用户自定义协议',
+      ].join('\n'),
+      'utf8',
+    );
+
+    // 1. 只有旧模板残骸（已摘掉思考节但仍剩 1 个回复小节）的非权威文件，应被清空
+    const staleHomeGemini = path.join(homeDir, '.gemini', 'GEMINI.md');
+    fs.writeFileSync(
+      staleHomeGemini,
+      ['# Antigravity 全局语言与思维规范', '', '## 1. 回复与交互', '- 始终使用中文回复用户'].join('\n'),
+      'utf8',
+    );
+
+    // 2. 仓库根目录纯老模板文件，应被清空
+    const repoRootAgents = path.join(workspaceRoot, 'AGENTS.md');
+    fs.writeFileSync(
+      repoRootAgents,
+      [
+        '# Antigravity 全局语言与思维规范',
+        '',
+        '## 1. 深度思考过程',
+        '- **必须全程使用中文思考**：禁止英文思考',
+        '',
+        '## 2. 19999 端口反重力专用隔离守则',
+        '- 仅限内部使用',
+      ].join('\n'),
+      'utf8',
+    );
+
+    // 3. 混合仓库指北 + 无编号思考限制的 webui/AGENTS.md：应保留 Backend/Frontend 指导，只清除思考禁令
+    const appAgents = path.join(workspaceApp, 'AGENTS.md');
+    fs.writeFileSync(
+      appAgents,
+      [
+        '# Repository guidance',
+        '',
+        '## Backend code',
+        '',
+        'Follow backend-module-standards.',
+        '',
+        '## 语言与思考规范 (Language Policy)',
+        '',
+        '- **严禁思维链使用英文**：严禁在思考（thinking）阶段使用英文分析问题。',
+      ].join('\n'),
+      'utf8',
+    );
+
+    ensureAgentTutorial({
+      homeDir,
+      workingDirs: [workspaceApp, workspaceRoot],
+    });
+
+    const authorityAfter = fs.readFileSync(authorityFile, 'utf8');
+    assert.equal(authorityAfter.includes('必须全程使用中文思考'), false);
+    assert.ok(authorityAfter.includes('保留用户自定义协议'));
+    assert.ok(authorityAfter.includes('<!-- antigravity-tutorial:start -->'));
+
+    assert.equal(fs.readFileSync(staleHomeGemini, 'utf8'), '');
+    assert.equal(fs.readFileSync(repoRootAgents, 'utf8'), '');
+
+    const appAgentsAfter = fs.readFileSync(appAgents, 'utf8');
+    assert.ok(appAgentsAfter.includes('## Backend code'));
+    assert.ok(appAgentsAfter.includes('Follow backend-module-standards.'));
+    assert.equal(appAgentsAfter.includes('严禁思维链使用英文'), false);
+    assert.equal(appAgentsAfter.includes('语言与思考规范'), false);
+
+    // 幂等校验：再次调用不触发无谓修改
+    ensureAgentTutorial({
+      homeDir,
+      workingDirs: [workspaceApp, workspaceRoot],
+    });
+    assert.equal(fs.readFileSync(authorityFile, 'utf8'), authorityAfter);
+    assert.equal(fs.readFileSync(appAgents, 'utf8'), appAgentsAfter);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('runAntigravityTurnOnce defaults --print-timeout to 0 and cleanly closes stdin after result', async () => {
+  const { proc, stdout } = createMockChildProcess();
+  let capturedArgs: string[] = [];
+  let processSpawned = false;
+  let stdinEnded = false;
+  proc.stdin?.on('finish', () => {
+    stdinEnded = true;
+  });
+
+  const prevTimeout = process.env.AGY_PRINT_TIMEOUT;
+  delete process.env.AGY_PRINT_TIMEOUT;
+  try {
+    const turnPromise = runAntigravityTurnOnce({
+      command: '测试默认超时参数',
+      workingDir: process.cwd(),
+      model: 'gemini-4-hydrogen',
+      effort: 'high',
+      permissionMode: 'default',
+      skipPermissions: false,
+      capturedSessionId: null,
+      accumulatedText: '',
+      ws: { send: () => {} } as any,
+      currentSessionKey: 'test-timeout-session',
+      abortSignal: new AbortController().signal,
+      onSessionDiscovered: () => {},
+      onTextDelta: () => {},
+      onFullText: () => {},
+      onProcessSpawned: () => {
+        processSpawned = true;
+      },
+      spawnImpl: ((_cmd: string, args: readonly string[]) => {
+        capturedArgs = [...args];
+        return proc;
+      }) as any,
+    });
+
+    const waitStart = Date.now();
+    while (!processSpawned && Date.now() - waitStart < 3000) {
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    assert.equal(processSpawned, true, 'spawnImpl should be invoked');
+    const timeoutIdx = capturedArgs.indexOf('--print-timeout');
+    assert.ok(timeoutIdx >= 0, '--print-timeout flag must be passed');
+    assert.equal(capturedArgs[timeoutIdx + 1], '0');
+
+    stdout.write(`${JSON.stringify({ event: 'init', conversation_id: 'conv-timeout-1' })}\n`);
+    stdout.write(`${JSON.stringify({
+      event: 'result',
+      result: { conversation_id: 'conv-timeout-1', status: 'SUCCESS', response: '完成' },
+    })}\n`);
+
+    const res = await turnPromise;
+    assert.equal(res.exitCode, 0);
+
+    // 验证 1500ms 延迟后优雅关闭 stdin
+    await new Promise((r) => setTimeout(r, 1700));
+    assert.equal(stdinEnded, true, 'stdin should gracefully end after result settlement');
+  } finally {
+    if (prevTimeout !== undefined) {
+      process.env.AGY_PRINT_TIMEOUT = prevTimeout;
+    }
+  }
 });

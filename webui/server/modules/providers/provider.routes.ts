@@ -676,6 +676,26 @@ router.get(
   }),
 );
 
+router.post(
+  '/antigravity/quota/claim-reset',
+  asyncHandler(async (req: Request, res: Response) => {
+    const resetId = typeof req.body?.resetId === 'string' ? req.body.resetId.trim() : '';
+    const email = typeof req.body?.email === 'string' && req.body.email.trim() ? req.body.email.trim() : undefined;
+    if (!resetId) {
+      throw new AppError('resetId is required', { code: 'INVALID_INPUT', statusCode: 400 });
+    }
+    const { antigravityAccountsService } = await import('./list/antigravity/antigravity-accounts.service.js');
+    const result = await antigravityAccountsService.claimBankedQuotaReset(resetId, email);
+    if (!result.ok) {
+      throw new AppError(result.error || '使用重置卡失败', {
+        code: 'CLAIM_BANKED_RESET_FAILED',
+        statusCode: result.statusCode && result.statusCode >= 400 && result.statusCode < 600 ? result.statusCode : 502,
+      });
+    }
+    res.json(createApiSuccessResponse(result));
+  }),
+);
+
 router.get(
   '/antigravity/proxy-toggle',
   asyncHandler(async (_req: Request, res: Response) => {

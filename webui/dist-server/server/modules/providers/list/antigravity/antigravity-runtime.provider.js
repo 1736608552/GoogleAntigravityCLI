@@ -353,17 +353,63 @@ function backupOnce(filePath) {
  * 有用户自己写的内容就原样保留——线上那份 GEMINI.md 的一级标题也是本程序的旧模板，
  * 但标题下面挂着用户手写的业务协议，按标题吞会连用户内容一起删掉（已踩过一次）。
  */
+const THINKING_RESTRICTION_LINE_RE = /^\s*-\s*.*(?:必须全程使用中文思考|严禁英文思考|严禁思维链使用英文|严禁在思考（thinking）阶段使用英文).*$/gm;
+const LEGACY_TEMPLATE_TITLE_RE = /^#\s*(?:Antigravity 全局语言与思维规范|Language Policy)(?:$|\s|\()/i;
+const LEGACY_SECTION_HEADING_RE = /^(?:\d+\.\s*)?(?:深度思考过程|回复与交互|语言与思考规范|19999\s*端口反重力专用隔离守则|零残留与即用即销守则)(?:$|\s|\()/;
+/**
+ * 判断文件是否仅由早期规则模板构成（不包含用户自定义协议或仓库指南）。
+ */
+function isLegacyTemplateOnly(content) {
+    const trimmed = content.trim();
+    if (!trimmed)
+        return false;
+    const firstLine = trimmed.split('\n')[0] || '';
+    if (!LEGACY_TEMPLATE_TITLE_RE.test(firstLine))
+        return false;
+    const headings = [...trimmed.matchAll(/^##\s+(.+)$/gm)].map((m) => m[1].trim());
+    if (headings.length === 0) {
+        // 只有旧一级标题和套话导语、已无任何二级小节
+        const bodyWithoutIntro = trimmed
+            .replace(/^#.*$/gm, '')
+            .replace(/^无论在任何场景.*$/gm, '')
+            .trim();
+        return bodyWithoutIntro.length === 0;
+    }
+    return headings.every((h) => LEGACY_SECTION_HEADING_RE.test(h));
+}
+/**
+ * 移除混合文件中的“强制中文思考 / 严禁英文思考”条目；若所在小节清空则连同标题移除。
+ */
+function stripUnnumberedThinkingRestrictions(content) {
+    // 先处理 `## 语言与思考规范` 小节：仅删思考限制行，其余中文回复条目保留；整节为空则连标题一并摘除
+    const policyHeadingMatch = content.match(/^##\s*语言与思考规范[^\n]*$/m);
+    let next = content;
+    if (policyHeadingMatch && policyHeadingMatch.index !== undefined) {
+        const startIdx = policyHeadingMatch.index;
+        const headerEnd = startIdx + policyHeadingMatch[0].length;
+        const afterHeader = next.slice(headerEnd);
+        const nextHeading = afterHeader.match(/^##\s+/m);
+        const endIdx = nextHeading && nextHeading.index !== undefined ? headerEnd + nextHeading.index : next.length;
+        const sectionBody = next.slice(headerEnd, endIdx).replace(THINKING_RESTRICTION_LINE_RE, '').trim();
+        next = sectionBody
+            ? `${next.slice(0, headerEnd)}\n\n${sectionBody}\n\n${next.slice(endIdx).replace(/^\n+/, '')}`
+            : `${next.slice(0, startIdx)}${next.slice(endIdx)}`;
+    }
+    // 兜底移除散落的单行思考语言禁令
+    next = next.replace(THINKING_RESTRICTION_LINE_RE, '');
+    return next;
+}
 function pruneLegacyRuleFile(filePath) {
     try {
         if (!fs.existsSync(filePath))
             return;
         const before = fs.readFileSync(filePath, 'utf8');
+        if (!before.trim())
+            return;
         pruneThinkingLanguageRules(filePath);
         const current = fs.readFileSync(filePath, 'utf8');
-        if (current === before)
+        if (!isLegacyTemplateOnly(current))
             return;
-        if (/^##\s/m.test(current))
-            return; // 还有用户小节，保留
         backupOnce(filePath);
         fs.writeFileSync(filePath, '', 'utf8');
         console.log('[Antigravity Runtime] 已清空历史规则模板文件:', filePath);
@@ -409,26 +455,34 @@ function upsertTutorialBlock(filePath) {
  */
 function pruneThinkingLanguageRules(filePath) {
     try {
-        const content = fs.readFileSync(filePath, 'utf8');
-        const startMarker = content.match(/^##\s*\d+\.\s*深度思考过程/m);
-        if (!startMarker || startMarker.index === undefined)
+        if (!fs.existsSync(filePath))
             return;
-        const startIdx = startMarker.index;
-        const afterStart = content.slice(startIdx + startMarker[0].length);
-        const nextHeading = afterStart.match(/^##\s*\d+\.\s/m);
-        const endIdx = nextHeading && nextHeading.index !== undefined
-            ? startIdx + startMarker[0].length + nextHeading.index
-            : content.length;
+        const content = fs.readFileSync(filePath, 'utf8');
+        let next = content;
+        const startMarker = next.match(/^##\s*\d+\.\s*深度思考过程/m);
+        if (startMarker && startMarker.index !== undefined) {
+            const startIdx = startMarker.index;
+            const afterStart = next.slice(startIdx + startMarker[0].length);
+            const nextHeading = afterStart.match(/^##\s*\d+\.\s/m);
+            const endIdx = nextHeading && nextHeading.index !== undefined
+                ? startIdx + startMarker[0].length + nextHeading.index
+                : next.length;
+            next = next.slice(0, startIdx) + next.slice(endIdx);
+            // 删掉一段后把后面的编号前移，避免出现 1、3、4 这种断号
+            for (let n = 2; n <= 9; n += 1) {
+                next = next.replace(new RegExp(`^## ${n}\\. `, 'gm'), `## ${n - 1}. `);
+            }
+        }
+        next = stripUnnumberedThinkingRestrictions(next);
+        if (next === content)
+            return;
+        next = next.trim() ? `${next.replace(/\n{3,}/g, '\n\n').trimEnd()}\n` : '';
+        if (next === content)
+            return;
         const backupPath = `${filePath}.bak-lang-prune`;
         if (!fs.existsSync(backupPath)) {
             fs.copyFileSync(filePath, backupPath);
         }
-        let next = content.slice(0, startIdx) + content.slice(endIdx);
-        // 删掉一段后把后面的编号前移，避免出现 1、3、4 这种断号
-        for (let n = 2; n <= 9; n += 1) {
-            next = next.replace(new RegExp(`^## ${n}\\. `, 'gm'), `## ${n - 1}. `);
-        }
-        next = `${next.replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
         fs.writeFileSync(filePath, next, 'utf8');
         console.log('[Antigravity Runtime] 已移除强制中文推理条款:', filePath);
     }
@@ -436,25 +490,45 @@ function pruneThinkingLanguageRules(filePath) {
         console.warn('[Antigravity Runtime] pruneThinkingLanguageRules error:', err?.message);
     }
 }
-export function ensureAgentTutorial() {
+/**
+ * Ensures the authoritative `~/.gemini/config/GEMINI.md` tutorial block stays up-to-date
+ * and prunes legacy thinking-language restrictions or redundant template copies across home & workspace dirs.
+ * Exported for `server/modules/providers/tests/antigravity-runtime.test.ts`.
+ */
+export function ensureAgentTutorial(options) {
     try {
-        const homeDir = process.env.AGY_HOME || process.env.HOME || process.env.USERPROFILE;
+        const homeDir = options?.homeDir ?? process.env.AGY_HOME ?? process.env.HOME ?? process.env.USERPROFILE;
         if (!homeDir)
             return;
         // 只认一个权威位置：CLI 启动时必然读取 ~/.gemini/config/GEMINI.md。
-        // 老实现往 5 个目录各写一份，同一份说明被重复加载数倍，纯属自我稀释。
+        // 老实现往多个目录各写一份，同一份说明被重复加载数倍，纯属自我稀释。
         const configDir = path.join(homeDir, '.gemini', 'config');
-        const authorityFile = path.join(configDir, 'GEMINI.md');
-        const legacyFiles = [
+        const authorityFile = path.resolve(path.join(configDir, 'GEMINI.md'));
+        const candidateDirs = new Set();
+        const rawWorkingDirs = options?.workingDirs ?? [process.cwd(), path.dirname(process.cwd())];
+        for (const dir of rawWorkingDirs) {
+            if (dir && typeof dir === 'string')
+                candidateDirs.add(path.resolve(dir));
+        }
+        const legacyFileSet = new Set([
             path.join(homeDir, 'GEMINI.md'),
             path.join(homeDir, 'AGENTS.md'),
             path.join(homeDir, '.gemini', 'GEMINI.md'),
             path.join(homeDir, '.gemini', 'AGENTS.md'),
+            path.join(homeDir, '.gemini', 'config', 'AGENTS.md'),
             path.join(homeDir, '.gemini', 'antigravity-cli', 'GEMINI.md'),
             path.join(homeDir, '.gemini', 'antigravity-cli', 'AGENTS.md'),
-        ];
-        for (const file of legacyFiles)
-            pruneLegacyRuleFile(file);
+        ]);
+        for (const dir of candidateDirs) {
+            legacyFileSet.add(path.join(dir, 'GEMINI.md'));
+            legacyFileSet.add(path.join(dir, 'AGENTS.md'));
+        }
+        for (const rawFile of legacyFileSet) {
+            const resolved = path.resolve(rawFile);
+            if (resolved === authorityFile)
+                continue;
+            pruneLegacyRuleFile(resolved);
+        }
         // 先摘掉「强制中文推理」这种拖后腿的条款（用户自己写的其余小节原样保留），再落新版说明
         pruneThinkingLanguageRules(authorityFile);
         upsertTutorialBlock(authorityFile);
@@ -688,12 +762,14 @@ export function runAntigravityTurnOnce(params) {
             return;
         }
         // 每轮补齐运行环境说明（幂等：内容未变则不写盘）
-        ensureAgentTutorial();
+        ensureAgentTutorial({
+            workingDirs: workingDir ? [workingDir, path.dirname(workingDir)] : undefined,
+        });
         const baseArgs = [
             '--input-format', 'stream-json',
             '--output-format', 'stream-json',
-            // 单回合最大执行超时放宽至 24 小时，彻底支持过夜挂机、深度自动化分析与超大工程重构
-            '--print-timeout', process.env.AGY_PRINT_TIMEOUT || '15m',
+            // 默认传 '0'（依据 CLI --help：0 waits until the turn completes），避免长任务被 15m 短超时中途砍断
+            '--print-timeout', process.env.AGY_PRINT_TIMEOUT || '0',
         ];
         const isBoostCommand = Boolean(command && /^\/boost\b/i.test(command.trim()));
         const effectiveEffort = isBoostCommand ? 'high' : effort;
@@ -831,7 +907,23 @@ export function runAntigravityTurnOnce(params) {
                 clearInterval(watchdogTimer);
                 watchdogTimer = null;
             }
-            // 注意：绝不强制关闭 stdin 或强杀子进程，以保证子代理与长程推演的生命周期完整
+            // 回合已收到 CLI 明确发出的 result/done 结算信号后，延迟优雅结束 stdin 引导进程自然退出，
+            // 避免遗留进程在下轮对话被 pkill -9 强杀而触发 `[Notice] ... due to server restart` 误报。
+            const gracefulEndTimer = setTimeout(() => {
+                try {
+                    if (antigravityProcess.stdin && !antigravityProcess.stdin.destroyed && !antigravityProcess.stdin.writableEnded) {
+                        antigravityProcess.stdin.end();
+                    }
+                }
+                catch (_) { }
+            }, 1500);
+            gracefulEndTimer.unref?.();
+            const gracefulTermTimer = setTimeout(() => {
+                if (!antigravityProcess.killed && antigravityProcess.exitCode === null) {
+                    terminateAntigravityProcess(antigravityProcess, false);
+                }
+            }, 4500);
+            gracefulTermTimer.unref?.();
             resolve({
                 exitCode: 0,
                 conversationId: turnConversationId,
@@ -1267,7 +1359,6 @@ export function runAntigravityTurnOnce(params) {
         // 诊断日志、重试警告、stderr 噪声不算进展 —— 否则上游挂死但 CLI 持续吐
         // 重试警告时看门狗会被无限续命（正是「超时一直干等」的根因）。
         let lastProgressTime = Date.now();
-        let stallNoticeSent = false;
         let lastForwardedErrorText = '';
         let lastForwardedErrorTime = 0;
         const isBoostMode = Boolean((command && /^\/boost\b/i.test(command.trim())) ||
@@ -1288,52 +1379,33 @@ export function runAntigravityTurnOnce(params) {
             const nowMs = Date.now();
             const silentMs = nowMs - lastActivityTime; // 字节级静默（stdout/stderr 全无输出）
             const stalledMs = nowMs - lastProgressTime; // 实质进展停滞（可能仍在反复吐重试警告）
-            const inactivityTimeoutMs = (isBaseLongRunningMode || spawnedSubagentsCount > 0) ? 600_000 : 360_000;
-            // 停滞预告：2 分钟无实质进展时向对话流推送一次提示（每回合最多一条），
-            // 让用户知道是上游卡住而非界面假死，可主动点「停止生成」。
-            if (!stallNoticeSent && !isSettled && stalledMs > 120_000) {
-                stallNoticeSent = true;
-                const stallSession = turnConversationId || currentSessionKey;
-                console.warn(`[Antigravity Runtime] ⏳ 已 ${Math.round(stalledMs / 1000)}s 无实质进展，向前端推送停滞提示`);
-                try {
-                    ws.send(createNormalizedMessage({
-                        id: `stall-notice-${stallSession}-${Date.now()}`,
-                        kind: 'error',
-                        role: 'assistant',
-                        content: '⏳ 模型侧已超过 2 分钟没有实质进展（可能在上游等待或反复重试）。若持续无变化，可点击「停止生成」。',
-                        sessionId: stallSession,
-                        provider: 'antigravity',
-                    }));
-                }
-                catch (_) { }
-            }
+            const inactivityTimeoutMs = (isBaseLongRunningMode || spawnedSubagentsCount > 0 || lastActiveToolCall !== null)
+                ? 1_800_000
+                : 600_000;
             if (silentMs > inactivityTimeoutMs || stalledMs > inactivityTimeoutMs) {
                 if (watchdogTimer) {
                     clearInterval(watchdogTimer);
                     watchdogTimer = null;
                 }
-                // 核心防假死兜底：达到真正超时上限且已产出实质内容时，先终止卡死的底层进程再收工交付，防止结算后继续泄漏推送
+                const timeoutSeconds = Math.round(Math.max(silentMs, stalledMs) / 1000);
                 if (turnEmitted.trim().length > 0) {
-                    console.log(`[Antigravity Runtime] 🚨 活跃看门狗到达上限 (${Math.round(inactivityTimeoutMs / 1000)}s)，终止底层失联进程并收工交付 (${turnEmitted.length} 字)`);
-                    turnHasSucceeded = true;
-                    finishSuccess();
-                    terminateAntigravityProcess(antigravityProcess);
-                    return;
+                    console.warn(`[Antigravity Runtime] 🚨 活跃看门狗到达上限 (${Math.round(inactivityTimeoutMs / 1000)}s)，中止卡滞进程并转为可恢复暂停 (${turnEmitted.length} 字)`);
+                    lastStderrError = `stream was interrupted before the response finished (stalled for ${timeoutSeconds}s)`;
                 }
-                console.warn(`[Antigravity Runtime] 🚨 活跃看门狗触发: 连续 ${Math.round(Math.max(silentMs, stalledMs) / 1000)} 秒无实质进展且未生成任何内容，终止底层进程...`);
-                lastStderrError = `stream timed out: no substantive output after ${Math.round(inactivityTimeoutMs / 1000)}s`;
+                else {
+                    console.warn(`[Antigravity Runtime] 🚨 活跃看门狗触发: 连续 ${timeoutSeconds} 秒无实质进展且未生成任何内容，终止底层进程...`);
+                    lastStderrError = `stream timed out: no substantive output after ${Math.round(inactivityTimeoutMs / 1000)}s`;
+                }
                 if (getProxyToggle() === 'yes') {
                     try {
                         exec('pkill -f "urnetwork/urnetwork-socks" 2>/dev/null || true');
                     }
                     catch (_) { }
                 }
-                try {
-                    antigravityProcess.kill('SIGTERM');
-                }
-                catch (_) { }
+                terminateAntigravityProcess(antigravityProcess, false);
             }
         }, 3_000);
+        watchdogTimer.unref?.();
         const stdoutDecoder = new StringDecoder('utf8');
         antigravityProcess.stdout?.on('data', (chunk) => {
             if (isSettled)
@@ -1440,7 +1512,9 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
     const workingDir = cwd || projectPath || process.cwd();
     const processKey = sessionId || Date.now().toString();
     // 每轮补齐运行环境说明（幂等：内容未变则不写盘）
-    ensureAgentTutorial();
+    ensureAgentTutorial({
+        workingDirs: workingDir ? [workingDir, path.dirname(workingDir)] : undefined,
+    });
     let capturedSessionId = providerSessionId;
     let sessionCreatedSent = false;
     let accumulatedText = '';
@@ -1590,19 +1664,16 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
             catch (err) {
                 if (abortController.signal.aborted)
                     throw err;
-                // 核心终极防护：如果已经积累了模型回复文本，说明本轮核心回复已经完整输出交付给前端！
-                // 无论底层发生任何末端断开、超时或关闭，坚决不得重试，更严禁重新注入“继续”导致重复生成！
-                if (accumulatedText && accumulatedText.trim().length > 0) {
-                    console.log(`[Antigravity Runtime] ✅ 当前回合已成功产出完整回复 (${accumulatedText.trim().length} 字符)，虽有末端静默或关闭信号，直接圆满结算交付，绝不重复生成！`);
-                    break;
-                }
                 const errMsg = String(err?.message || err || '');
                 lastError = errMsg;
-                // 活跃看门狗超时：直接安全退出，坚决不进行网络重试更不发“继续”
-                const isWatchdogTimeout = /watchdog|timed out|inactivity/i.test(errMsg);
+                // 活跃看门狗超时：若已输出部分内容则转为明确的可恢复暂停通知，绝不伪装成功也不自动重复生成
+                const isWatchdogTimeout = /watchdog|timed out|inactivity|stalled for/i.test(errMsg);
                 if (isWatchdogTimeout) {
-                    console.warn(`[Antigravity Runtime] 活跃看门狗静默超时，终止无谓重试并安全退出: ${errMsg}`);
-                    break;
+                    console.warn(`[Antigravity Runtime] 活跃看门狗静默超时，终止重试并交由上层处理: ${errMsg}`);
+                    if (accumulatedText && accumulatedText.trim().length > 0) {
+                        throw new Error(`stream was interrupted before the response finished (${errMsg})`);
+                    }
+                    throw err;
                 }
                 if (err instanceof QuotaExhaustedError) {
                     const currentSessionId = capturedSessionId || sessionId || null;
@@ -1700,6 +1771,10 @@ export async function spawnAntigravity(command, options = {}, ws, context) {
                 }
                 const isStreamInterrupted = !isWatchdogTimeout && /stream was interrupted|please continue the task|subscriber fell behind updates|stalled for|interrupted before the response finished/i.test(errMsg);
                 const isProxyEOF = !isWatchdogTimeout && /EOF|connection reset by peer|stream ended|unexpected EOF/i.test(errMsg);
+                // 若当前回合已产出部分回复后才断开，不再重发原始 command 避免重复执行，转为可恢复断点暂停
+                if (accumulatedText && accumulatedText.trim().length > 0 && (isStreamInterrupted || isProxyEOF)) {
+                    throw new Error(`stream was interrupted before the response finished (${errMsg})`);
+                }
                 // 防无限重发与死循环保护：流中断或断连时最多允许重试 1 次（绝不篡改 prompt 狂发“继续”，绝不中途 pkill 代理）
                 if ((isStreamInterrupted || isProxyEOF) && attempt < 2) {
                     console.warn(`[Antigravity Runtime] 捕获到单次流中断或断连波动 (尝试 ${attempt}/2)，等待 2 秒进行单次原位恢复...`);

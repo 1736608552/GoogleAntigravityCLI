@@ -24,9 +24,13 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { api } from '@/shared/api';
-import { fetchAntigravityQuota, getCachedAccountQuota } from '@/modules/chat/hooks/useAntigravityQuota';
+import {
+  fetchAntigravityQuota,
+  getCachedAccountQuota,
+  updateCachedAntigravityQuota,
+} from '@/modules/chat';
 import { Badge, Button, LLMProviderLogo } from '@/shared/ui';
-import type { AntigravityAccount, ProviderAuthStatus } from '@/shared/types';
+import type { AntigravityAccount, AntigravityBankedReset, ProviderAuthStatus } from '@/shared/types';
 
 const GRADIENTS = [
   'from-blue-600 to-indigo-600',
@@ -176,6 +180,8 @@ export default function AntigravityAccountManager({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [liveQuota, setLiveQuota] = useState(() => getCachedAccountQuota());
   const [isRefreshingQuota, setIsRefreshingQuota] = useState(false);
+  // Tracks which banked reset card is currently being redeemed to prevent duplicate submissions.
+  const [claimingResetId, setClaimingResetId] = useState<string | null>(null);
 
   const handleRefreshQuota = useCallback(async () => {
     setIsRefreshingQuota(true);
@@ -278,6 +284,36 @@ export default function AntigravityAccountManager({
     void fetchAccounts();
     void fetchProxyToggle();
   }, [fetchAccounts, fetchProxyToggle]);
+
+  const handleClaimBankedReset = async (card: AntigravityBankedReset, email?: string) => {
+    if (!card.resetId || claimingResetId) return;
+    if (!window.confirm(`确定要使用重置卡「${card.displayLabel}」（剩余 ${card.remainingCount} 张）立即重置配额吗？`)) {
+      return;
+    }
+    setClaimingResetId(card.resetId);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      const response = await api.providers.claimAntigravityBankedReset(card.resetId, email);
+      const json = await response.json().catch(() => ({}));
+      const data = json.data || json;
+      if (response.ok && data?.ok) {
+        if (data.quotaSnapshot) {
+          setLiveQuota(data.quotaSnapshot);
+          updateCachedAntigravityQuota(data.quotaSnapshot);
+        }
+        setSuccessMsg(data.message || '重置卡已生效，实时配额已刷新');
+        void fetchAccounts();
+        setTimeout(() => setSuccessMsg(null), 4000);
+      } else {
+        setErrorMsg(json.error || data?.error || '重置卡使用失败');
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || '重置卡激活请求异常');
+    } finally {
+      setClaimingResetId(null);
+    }
+  };
 
   const handleSwitchAccount = async (email: string) => {
     setSwitchingEmail(email);
@@ -758,6 +794,86 @@ export default function AntigravityAccountManager({
                     {cWk?.resetsIn && <div className="text-[9.5px] text-muted-foreground">每周重置：{cWk.resetsIn}</div>}
                   </div>
                 </div>
+              </div>
+            )}
+
+            {displaySnap && (
+              <div className="pt-2.5 border-t border-border/40 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-foreground">
+                    可累积重置卡 (Banked Resets)
+                  </span>
+                  {(() => {
+                    const cards = displaySnap.bankedResets || [];
+                    const totalCount = cards.reduce((sum, item) => sum + (item.remainingCount || 0), 0);
+                    return cards.length > 0 ? (
+                      <span className="inline-flex items-center rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                        可用 {totalCount} 张
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground">暂无可用重置卡</span>
+                    );
+                  })()}
+                </div>
+
+                {displaySnap.bankedResets && displaySnap.bankedResets.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {displaySnap.bankedResets.map((card) => {
+                      const isClaimingThis = claimingResetId === card.resetId;
+                      return (
+                        <div
+                          key={card.resetId}
+                          className="flex items-center justify-between gap-2.5 rounded-xl border border-border/60 bg-muted/20 px-3 py-2"
+                        >
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[11px] font-semibold text-foreground truncate">
+                                {card.displayLabel}
+                              </span>
+                              <span className="inline-flex items-center rounded-md bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.2 text-[9.5px] font-mono font-semibold text-blue-600 dark:text-blue-300">
+                                x{card.remainingCount}
+                              </span>
+                              {card.expiresIn && (
+                                <span className="text-[9.5px] text-muted-foreground">
+                                  {card.expiresIn}
+                                </span>
+                              )}
+                            </div>
+                            {card.bucketIds && card.bucketIds.length > 0 && (
+                              <div className="text-[9.5px] text-muted-foreground truncate font-mono">
+                                适用池: {card.bucketIds.join(', ')}
+                              </div>
+                            )}
+                            {!card.claimable && card.ineligibleReasonText && (
+                              <div className="text-[9.5px] text-amber-600 dark:text-amber-400">
+                                {card.ineligibleReasonText}
+                              </div>
+                            )}
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!card.claimable || Boolean(claimingResetId)}
+                            onClick={() => void handleClaimBankedReset(card, displaySnap.accountEmail || activeAccount?.email)}
+                            className={`h-7 px-2.5 text-[10.5px] shrink-0 gap-1 rounded-lg ${
+                              card.claimable
+                                ? 'border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400'
+                                : 'border-border/50 text-muted-foreground opacity-60'
+                            }`}
+                          >
+                            {isClaimingThis ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                            <span>{isClaimingThis ? '使用中...' : card.claimable ? '立即使用' : '暂不可用'}</span>
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/50 bg-muted/10 px-3 py-2 text-[10.5px] text-muted-foreground">
+                    当前账号暂未获发可累积重置卡；官方发放后将自动在此显示并支持一键激活重置。
+                  </div>
+                )}
               </div>
             )}
           </div>

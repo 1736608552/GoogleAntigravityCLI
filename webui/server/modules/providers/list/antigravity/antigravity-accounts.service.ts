@@ -33,6 +33,19 @@ export type ModelQuotaItem = {
   status: 'healthy' | 'warning' | 'danger';
 };
 
+/** Used by provider.routes.ts and frontend quota snapshot payload. */
+export type AntigravityBankedReset = {
+  resetId: string;
+  displayLabel: string;
+  remainingCount: number;
+  expireTime: string | null;
+  expiresIn: string;
+  claimable: boolean;
+  ineligibleReason?: string;
+  ineligibleReasonText?: string;
+  bucketIds: string[];
+};
+
 export type AntigravityQuotaSnapshot = {
   gemini5h: AntigravityQuotaPool;
   geminiWeekly: AntigravityQuotaPool;
@@ -58,6 +71,7 @@ export type AntigravityQuotaSnapshot = {
   policyNote?: string;
   projectId?: string;
   models?: ModelQuotaItem[];
+  bankedResets?: AntigravityBankedReset[];
   metrics?: {
     totalConversations?: number;
     totalTurns?: number;
@@ -255,6 +269,155 @@ function getNextWeeklyResetIso(): string {
     0, 0, 0, 0
   ));
   return nextMonday.toISOString();
+}
+
+const CLOUDCODE_SUMMARY_HOSTS = [
+  'daily-cloudcode-pa.googleapis.com',
+  'cloudcode-pa.googleapis.com',
+];
+
+function formatResetExpireCountdown(isoString?: string | null): string {
+  if (!isoString) return '长期有效';
+  const target = new Date(isoString).getTime();
+  if (isNaN(target)) return '未知';
+  if (target <= Date.now()) return '已过期';
+  const countdown = formatDynamicCountdown(isoString, '', false);
+  return countdown === '即将重置' ? '即将过期' : `${countdown}后过期`;
+}
+
+/** Used by AntigravityAccountsService and unit tests in antigravity-accounts-reset.test.ts. */
+export function formatIneligibleReasonText(reason?: string | number | null): string | undefined {
+  if (reason === undefined || reason === null || reason === '') return undefined;
+  const raw = String(reason).trim();
+  if (!raw || raw === '0' || raw === 'QUOTA_SUMMARY_BANKED_RESET_INELIGIBLE_REASON_UNSPECIFIED') {
+    return undefined;
+  }
+  if (raw === 'QUOTA_SUMMARY_BANKED_RESET_INELIGIBLE_REASON_USAGE_BELOW_THRESHOLD' || raw === '1') {
+    return '当前用量尚未达到重置触发阈值，暂不可使用';
+  }
+  return `暂不满足使用条件 (${raw})`;
+}
+
+/** Used by AntigravityAccountsService and unit tests in antigravity-accounts-reset.test.ts. */
+export function parseBankedResets(rawSummary: any): AntigravityBankedReset[] {
+  const rawList =
+    rawSummary?.bankedResets ??
+    rawSummary?.banked_resets ??
+    rawSummary?.response?.bankedResets ??
+    rawSummary?.response?.banked_resets;
+
+  if (!Array.isArray(rawList) || rawList.length === 0) return [];
+
+  const parsed: AntigravityBankedReset[] = [];
+  for (const item of rawList) {
+    if (!item || typeof item !== 'object') continue;
+    const resetId = String(item.resetId ?? item.reset_id ?? '').trim();
+    const displayLabel = String(item.displayLabel ?? item.display_label ?? '').trim();
+    if (!resetId && !displayLabel) continue;
+
+    const rawCount = Number(item.remainingCount ?? item.remaining_count ?? 0);
+    const remainingCount = Number.isFinite(rawCount) ? Math.max(0, rawCount) : 0;
+    const expireTimeRaw = item.expireTime ?? item.expire_time ?? null;
+    const expireTime = expireTimeRaw ? String(expireTimeRaw) : null;
+    const rawReason = item.ineligibleReason ?? item.ineligible_reason;
+    const ineligibleReason =
+      rawReason !== undefined && rawReason !== null && String(rawReason).trim() !== ''
+        ? String(rawReason).trim()
+        : undefined;
+    const rawBuckets = item.bucketIds ?? item.bucket_ids;
+    const bucketIds = Array.isArray(rawBuckets)
+      ? rawBuckets.map((b: any) => String(b).trim()).filter(Boolean)
+      : [];
+
+    parsed.push({
+      resetId: resetId || displayLabel,
+      displayLabel: displayLabel || '配额重置卡',
+      remainingCount,
+      expireTime,
+      expiresIn: formatResetExpireCountdown(expireTime),
+      claimable: Boolean(item.claimable) && remainingCount > 0,
+      ineligibleReason,
+      ineligibleReasonText: formatIneligibleReasonText(ineligibleReason),
+      bucketIds,
+    });
+  }
+  return parsed;
+}
+
+function parseSummaryPoolBucket(g: any, win: string, fallbackDesc: string): AntigravityQuotaPool {
+  const candidates = (g?.buckets || []).filter((x: any) => x.window === win);
+  const resolveFrac = (item: any): number => {
+    if (!item) return 1;
+    if (typeof item.remainingFraction === 'number') return item.remainingFraction;
+    const hasFuture = item.resetTime ? new Date(item.resetTime).getTime() > Date.now() : false;
+    return hasFuture ? 0 : 1;
+  };
+  const b = candidates.reduce((minItem: any, cur: any) => {
+    if (!minItem) return cur;
+    return resolveFrac(cur) < resolveFrac(minItem) ? cur : minItem;
+  }, null as any);
+  const rt = b?.resetTime || null;
+  const frac = Math.max(0, Math.min(1, resolveFrac(b)));
+  const pct = Math.round(frac * 1000) / 10;
+  const used = parseFloat((100 - pct).toFixed(1));
+  const desc = b?.description || fallbackDesc;
+  const resetsIn = formatDynamicCountdown(rt, desc, win === '5h', pct);
+  return {
+    title: `${g?.displayName || (win === '5h' ? '实时算力' : '周期算力')} ${win === '5h' ? '5小时额度' : '每周总额度'}`,
+    percent: pct,
+    used,
+    total: 100,
+    remainingFraction: frac,
+    resetTime: rt,
+    resetsIn,
+    resetText: resetsIn,
+    description: desc,
+    status: pct > 20 ? 'healthy' : pct > 0 ? 'warning' : 'danger',
+  };
+}
+
+function readLocalConversationMetrics() {
+  let totalConversations = 0;
+  let totalTurns = 0;
+  let totalTokens = 0;
+  let weeklySteps = 0;
+  let fiveHourSteps = 0;
+  try {
+    const dbPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'conversation_summaries.db');
+    if (fs.existsSync(dbPath)) {
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      const row = db.prepare('SELECT count(*) as totalConvs, coalesce(sum(step_count), 0) as totalSteps FROM conversation_summaries').get() as any;
+      totalConversations = Number(row?.totalConvs || 0);
+      totalTurns = Number(row?.totalSteps || 0);
+      totalTokens = totalTurns * 180;
+
+      const nowUtc = new Date();
+      const dayOfWeek = nowUtc.getUTCDay();
+      const diffToMonday = (dayOfWeek + 6) % 7;
+      const mondayDate = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate() - diffToMonday));
+      const mondayIsoStr = mondayDate.toISOString().slice(0, 10);
+      const wRow = db.prepare('SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= ?').get(mondayIsoStr) as any;
+      weeklySteps = Number(wRow?.steps || 0);
+
+      const fiveHRow = db.prepare("SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= datetime('now', '-5 hours')").get() as any;
+      fiveHourSteps = Number(fiveHRow?.steps || 0);
+    }
+  } catch (_) {}
+
+  const tokensFormatted = totalTokens >= 1_000_000
+    ? `${(totalTokens / 1_000_000).toFixed(1)}M`
+    : totalTokens >= 1_000
+    ? `${(totalTokens / 1_000).toFixed(1)}K`
+    : String(totalTokens);
+
+  return {
+    totalConversations,
+    totalTurns,
+    totalTokens,
+    tokensFormatted,
+    weeklySteps,
+    fiveHourSteps,
+  };
 }
 
 async function fetchGoogleApi(url: string, options: any = {}): Promise<any> {
@@ -493,42 +656,11 @@ class AntigravityAccountsService {
       const geminiGroup = groups.find((g: any) => /gemini/i.test(g?.displayName || '')) || groups[0];
       const claudeGroup = groups.find((g: any) => /claude|gpt|3p/i.test(g?.displayName || '')) || groups[1];
 
-      const parseBucket = (g: any, win: string, fallbackDesc: string): AntigravityQuotaPool => {
-        const candidates = (g?.buckets || []).filter((x: any) => x.window === win);
-        const resolveFrac = (item: any): number => {
-          if (!item) return 1;
-          if (typeof item.remainingFraction === 'number') return item.remainingFraction;
-          const hasFuture = item.resetTime ? new Date(item.resetTime).getTime() > Date.now() : false;
-          return hasFuture ? 0 : 1;
-        };
-        const b = candidates.reduce((minItem: any, cur: any) => {
-          if (!minItem) return cur;
-          return resolveFrac(cur) < resolveFrac(minItem) ? cur : minItem;
-        }, null as any);
-        const rt = b?.resetTime || null;
-        const frac = Math.max(0, Math.min(1, resolveFrac(b)));
-        const pct = Math.round(frac * 1000) / 10;
-        const used = parseFloat((100 - pct).toFixed(1));
-        const desc = b?.description || fallbackDesc;
-        const resetsIn = formatDynamicCountdown(rt, desc, win === '5h', pct);
-        return {
-          title: `${g?.displayName || (win === '5h' ? '实时算力' : '周期算力')} ${win === '5h' ? '5小时额度' : '每周总额度'}`,
-          percent: pct,
-          used,
-          total: 100,
-          remainingFraction: frac,
-          resetTime: rt,
-          resetsIn,
-          resetText: resetsIn,
-          description: desc,
-          status: pct > 20 ? 'healthy' : pct > 0 ? 'warning' : 'danger',
-        };
-      };
-
-      const gemini5h = parseBucket(geminiGroup, '5h', '5小时滚动突发配额');
-      const geminiWeekly = parseBucket(geminiGroup, 'weekly', '每周全局上限硬预算');
-      const claude5h = parseBucket(claudeGroup, '5h', '5小时滚动突发配额');
-      const claudeWeekly = parseBucket(claudeGroup, 'weekly', '每周全局上限硬预算');
+      const gemini5h = parseSummaryPoolBucket(geminiGroup, '5h', '5小时滚动突发配额');
+      const geminiWeekly = parseSummaryPoolBucket(geminiGroup, 'weekly', '每周全局上限硬预算');
+      const claude5h = parseSummaryPoolBucket(claudeGroup, '5h', '5小时滚动突发配额');
+      const claudeWeekly = parseSummaryPoolBucket(claudeGroup, 'weekly', '每周全局上限硬预算');
+      const bankedResets = parseBankedResets(qData);
 
       const userStatus = sData?.userStatus || sData || {};
       const planInfo = userStatus?.planStatus?.planInfo || {};
@@ -546,39 +678,7 @@ class AntigravityAccountsService {
       const accounts = this.loadAccounts();
       const targetAcc = accounts.find((a) => a.email.toLowerCase() === email);
 
-      let totalConversations = 0;
-      let totalTurns = 0;
-      let totalTokens = 0;
-      let weeklySteps = 0;
-      let fiveHourSteps = 0;
-      try {
-        const dbPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'conversation_summaries.db');
-        if (fs.existsSync(dbPath)) {
-          const Database = require('better-sqlite3');
-          const db = new Database(dbPath, { readonly: true });
-          const row = db.prepare('SELECT count(*) as totalConvs, coalesce(sum(step_count), 0) as totalSteps FROM conversation_summaries').get() as any;
-          totalConversations = Number(row?.totalConvs || 0);
-          totalTurns = Number(row?.totalSteps || 0);
-          totalTokens = totalTurns * 180;
-
-          const nowUtc = new Date();
-          const dayOfWeek = nowUtc.getUTCDay();
-          const diffToMonday = (dayOfWeek + 6) % 7;
-          const mondayDate = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate() - diffToMonday));
-          const mondayIsoStr = mondayDate.toISOString().slice(0, 10);
-          const wRow = db.prepare('SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= ?').get(mondayIsoStr) as any;
-          weeklySteps = Number(wRow?.steps || 0);
-
-          const fiveHRow = db.prepare("SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= datetime('now', '-5 hours')").get() as any;
-          fiveHourSteps = Number(fiveHRow?.steps || 0);
-        }
-      } catch (_) {}
-
-      const tokensFormatted = totalTokens >= 1_000_000
-        ? `${(totalTokens / 1_000_000).toFixed(1)}M`
-        : totalTokens >= 1_000
-        ? `${(totalTokens / 1_000).toFixed(1)}K`
-        : String(totalTokens);
+      const metrics = readLocalConversationMetrics();
 
       const modelsList: ModelQuotaItem[] = [];
       const configs = userStatus?.cascadeModelConfigData?.clientModelConfigs || [];
@@ -620,14 +720,8 @@ class AntigravityAccountsService {
         policyNote: 'Google 语言服务器实时原生配额生效中：5小时滚动突发配额与每周总额度双轨实时追踪。',
         projectId: userStatus?.projectId || 'antigravity-local',
         models: modelsList,
-        metrics: {
-          totalConversations,
-          totalTurns,
-          totalTokens,
-          tokensFormatted,
-          weeklySteps,
-          fiveHourSteps,
-        },
+        bankedResets,
+        metrics,
         updatedAt: Date.now(),
       };
     } catch (e: any) {
@@ -708,6 +802,12 @@ class AntigravityAccountsService {
       const reset = formatDynamicCountdown(cloned.activeWeekly.resetTime, cloned.activeWeekly.description, false, cloned.activeWeekly.percent);
       cloned.activeWeekly = { ...cloned.activeWeekly, resetsIn: reset, resetText: reset };
       cloned.weeklyResetIn = reset;
+    }
+    if (Array.isArray(cloned.bankedResets)) {
+      cloned.bankedResets = cloned.bankedResets.map((item) => ({
+        ...item,
+        expiresIn: formatResetExpireCountdown(item.expireTime),
+      }));
     }
     return cloned;
   }
@@ -838,7 +938,40 @@ class AntigravityAccountsService {
         console.warn('[AntigravityAccounts] loadCodeAssist error:', e);
       }
 
-      // 阶段 2：通过 fetchAvailableModels 获取全量各模型真实配额 (对齐 AntigravityQuotaWatcher 核心)
+      // 阶段 2：并行调用 v1internal:retrieveUserQuotaSummary（获取最新重置卡 bankedResets 与原生双窗口）与 fetchAvailableModels
+      const summaryBody = projectInfo.projectId ? { project: projectInfo.projectId } : {};
+      let restSummaryData: any = null;
+      for (const host of CLOUDCODE_SUMMARY_HOSTS) {
+        try {
+          let resSummary = await fetchGoogleApi(`https://${host}/v1internal:retrieveUserQuotaSummary`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(summaryBody),
+          });
+          if (resSummary?.status === 401 && tokenData?.token?.refresh_token) {
+            tokenData = await this.refreshAccessToken(tokenData);
+            token = tokenData?.token?.access_token;
+            if (token) {
+              headers['Authorization'] = `Bearer ${token}`;
+              if (targetAccount) targetAccount.tokenData = tokenData;
+              resSummary = await fetchGoogleApi(`https://${host}/v1internal:retrieveUserQuotaSummary`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(summaryBody),
+              });
+            }
+          }
+          if (resSummary && resSummary.ok) {
+            restSummaryData = await resSummary.json();
+            if (restSummaryData?.groups || restSummaryData?.bankedResets || restSummaryData?.banked_resets) {
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+      const restBankedResets = parseBankedResets(restSummaryData);
+
+      // 阶段 3：通过 fetchAvailableModels 获取全量各模型真实配额 (对齐 AntigravityQuotaWatcher 核心)
       let modelsData: any = null;
       let errStatus = 0;
       let errorMsg = '';
@@ -896,11 +1029,41 @@ class AntigravityAccountsService {
           (existingRealSnapshot.gemini5h.resetTime && existingRealSnapshot.gemini5h.resetsIn !== '随时可用'));
 
       if (hasValidLsData) {
-        return this.refreshSnapshotCountdowns(existingRealSnapshot);
+        const mergedExisting: AntigravityQuotaSnapshot = restSummaryData
+          ? { ...existingRealSnapshot, bankedResets: restBankedResets }
+          : existingRealSnapshot;
+        if (restSummaryData && targetAccount) {
+          targetAccount.quotaSnapshot = mergedExisting;
+          this.saveAccounts(accounts);
+        }
+        return this.refreshSnapshotCountdowns(mergedExisting);
       }
 
       if (modelsData && modelsData.models) {
         const snapshot = this.buildQuotaSnapshotFromModels(modelsData.models, projectInfo, accEmail);
+        if (restSummaryData) {
+          snapshot.bankedResets = restBankedResets;
+        }
+        // 若 v1internal:retrieveUserQuotaSummary 返回了真实 5h/weekly 分组，补全 Claude/GPT 双窗口池
+        const restGroups: any[] = Array.isArray(restSummaryData?.groups) ? restSummaryData.groups : [];
+        const restClaudeGroup = restGroups.find((g: any) => /claude|gpt|3p/i.test(g?.displayName || ''));
+        if (restClaudeGroup) {
+          snapshot.claude5h = parseSummaryPoolBucket(restClaudeGroup, '5h', '5小时滚动突发配额');
+          snapshot.claudeWeekly = parseSummaryPoolBucket(restClaudeGroup, 'weekly', '每周全局上限硬预算');
+        }
+        const restGeminiGroup = restGroups.find((g: any) => /gemini/i.test(g?.displayName || ''));
+        if (restGeminiGroup) {
+          snapshot.gemini5h = parseSummaryPoolBucket(restGeminiGroup, '5h', '5小时滚动突发配额');
+          snapshot.geminiWeekly = parseSummaryPoolBucket(restGeminiGroup, 'weekly', '每周全局上限硬预算');
+          snapshot.active5h = snapshot.gemini5h;
+          snapshot.activeWeekly = snapshot.geminiWeekly;
+          snapshot.percent = snapshot.gemini5h.percent;
+          snapshot.resetTime = snapshot.gemini5h.resetTime;
+          snapshot.resetsIn = snapshot.gemini5h.resetsIn;
+          snapshot.weeklyPercent = snapshot.geminiWeekly.percent;
+          snapshot.weeklyResetTime = snapshot.geminiWeekly.resetTime;
+          snapshot.weeklyResetIn = snapshot.geminiWeekly.resetsIn;
+        }
         if (targetAccount) {
           targetAccount.quotaSummary = modelsData;
           targetAccount.quotaSnapshot = snapshot;
@@ -913,6 +1076,51 @@ class AntigravityAccountsService {
         if (!targetEmail || (targetAccount && targetAccount.isActive)) {
           this.cachedQuotaSnapshot = snapshot;
           this.quotaCacheTime = Date.now();
+        }
+        return snapshot;
+      }
+
+      if (restSummaryData && Array.isArray(restSummaryData.groups) && restSummaryData.groups.length > 0) {
+        const restGroups: any[] = restSummaryData.groups;
+        const gGroup = restGroups.find((g: any) => /gemini/i.test(g?.displayName || '')) || restGroups[0];
+        const cGroup = restGroups.find((g: any) => /claude|gpt|3p/i.test(g?.displayName || '')) || restGroups[1] || gGroup;
+        const gemini5h = parseSummaryPoolBucket(gGroup, '5h', '5小时滚动突发配额');
+        const geminiWeekly = parseSummaryPoolBucket(gGroup, 'weekly', '每周全局上限硬预算');
+        const claude5h = parseSummaryPoolBucket(cGroup, '5h', '5小时滚动突发配额');
+        const claudeWeekly = parseSummaryPoolBucket(cGroup, 'weekly', '每周全局上限硬预算');
+        const snapshot: AntigravityQuotaSnapshot = {
+          gemini5h,
+          geminiWeekly,
+          claude5h,
+          claudeWeekly,
+          active5h: gemini5h,
+          activeWeekly: geminiWeekly,
+          percent: gemini5h.percent,
+          resetTime: gemini5h.resetTime,
+          resetsIn: gemini5h.resetsIn,
+          weeklyPercent: geminiWeekly.percent,
+          weeklyResetTime: geminiWeekly.resetTime,
+          weeklyResetIn: geminiWeekly.resetsIn,
+          accountEmail: accEmail,
+          accountName: targetAccount?.name || accEmail.split('@')[0] || 'Google 用户',
+          accountPicture: targetAccount?.picture || '',
+          tier: projectInfo.tier,
+          tierType: projectInfo.isPro ? 'pro' : 'free',
+          tierBadge: projectInfo.isPro ? 'PRO' : 'FREE',
+          policyNote: 'Google 云端实时汇总配额生效中：5小时突发配额与每周总额度实时追踪。',
+          projectId: projectInfo.projectId,
+          models: [],
+          bankedResets: restBankedResets,
+          metrics: readLocalConversationMetrics(),
+          updatedAt: Date.now(),
+        };
+        if (targetAccount) {
+          targetAccount.quotaSnapshot = snapshot;
+          targetAccount.lastQuotaFetchedAt = Date.now();
+          this.saveAccounts(accounts);
+        }
+        if (accEmail) {
+          this.accountQuotaSnapshots.set(accEmail.toLowerCase(), { snapshot, time: Date.now() });
         }
         return snapshot;
       }
@@ -1135,40 +1343,7 @@ class AntigravityAccountsService {
       status: claudeStatus,
     };
 
-    // 毫秒级真实本地 SQLite 会话库统计 (完全真实离线数据，无任何虚构)
-    let totalConversations = 0;
-    let totalTurns = 0;
-    let totalTokens = 0;
-    let weeklySteps = 0;
-    let fiveHourSteps = 0;
-    try {
-      const dbPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'conversation_summaries.db');
-      if (fs.existsSync(dbPath)) {
-        const db = new DatabaseSync(dbPath, { readOnly: true });
-        const row = db.prepare('SELECT count(*) as totalConvs, coalesce(sum(step_count), 0) as totalSteps FROM conversation_summaries').get() as any;
-        totalConversations = Number(row?.totalConvs || 0);
-        totalTurns = Number(row?.totalSteps || 0);
-        totalTokens = totalTurns * 180;
-
-        // 计算本周（从周一开始）与最近 5 小时的真实步数
-        const nowUtc = new Date();
-        const dayOfWeek = nowUtc.getUTCDay();
-        const diffToMonday = (dayOfWeek + 6) % 7;
-        const mondayDate = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate() - diffToMonday));
-        const mondayIsoStr = mondayDate.toISOString().slice(0, 10);
-        const wRow = db.prepare('SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= ?').get(mondayIsoStr) as any;
-        weeklySteps = Number(wRow?.steps || 0);
-
-        const fiveHRow = db.prepare("SELECT coalesce(sum(step_count), 0) as steps FROM conversation_summaries WHERE last_modified_time >= datetime('now', '-5 hours')").get() as any;
-        fiveHourSteps = Number(fiveHRow?.steps || 0);
-      }
-    } catch (_) {}
-
-    const tokensFormatted = totalTokens > 1000000
-      ? `${(totalTokens / 1000000).toFixed(2)}M`
-      : totalTokens > 1000
-      ? `${(totalTokens / 1000).toFixed(1)}k`
-      : String(totalTokens);
+    const metrics = readLocalConversationMetrics();
 
     const isPro = projectInfo.isPro;
     const tierName = projectInfo.tier || (isPro ? 'Google AI Pro' : 'Google AI 标准版');
@@ -1198,14 +1373,7 @@ class AntigravityAccountsService {
         : 'Google AI 免费计划：实时对接 Google 官方云端配额。',
       projectId: projectInfo.projectId,
       models: modelsList,
-      metrics: {
-        totalConversations,
-        totalTurns,
-        totalTokens,
-        tokensFormatted,
-        weeklySteps,
-        fiveHourSteps,
-      },
+      metrics,
       updatedAt: Date.now(),
     };
   }
@@ -1930,6 +2098,178 @@ class AntigravityAccountsService {
 
   public cliLoginCancel(id: string): void {
     this.cleanupLoginSession(id);
+  }
+
+  /**
+   * Used by provider.routes.ts to redeem a Google Antigravity banked quota reset card.
+   * Calls Google Cloud Code `v1internal:claimBankedQuotaReset` directly without routing through 19999.
+   */
+  public async claimBankedQuotaReset(
+    resetId: string,
+    targetEmail?: string,
+    options?: {
+      fetchImpl?: typeof fetch;
+      tokenData?: any;
+      projectId?: string;
+      email?: string;
+    },
+  ): Promise<{
+    ok: boolean;
+    message?: string;
+    error?: string;
+    statusCode?: number;
+    quotaSnapshot?: AntigravityQuotaSnapshot | null;
+  }> {
+    const cleanResetId = String(resetId || '').trim();
+    if (!cleanResetId) {
+      return { ok: false, error: '重置卡 ID (resetId) 不能为空', statusCode: 400 };
+    }
+
+    const fetchFn = options?.fetchImpl || fetch;
+    const isTestInjected = Boolean(options?.fetchImpl || options?.tokenData);
+
+    const accounts = isTestInjected ? [] : this.loadAccounts();
+    const targetAccount = isTestInjected
+      ? undefined
+      : targetEmail
+      ? accounts.find((a) => a.email.toLowerCase() === targetEmail.toLowerCase())
+      : accounts.find((a) => a.isActive) || accounts[0];
+
+    let tokenData = options?.tokenData ?? (targetEmail ? targetAccount?.tokenData : (targetAccount?.tokenData || this.readActiveToken()));
+    if (!tokenData?.token?.access_token) {
+      return { ok: false, error: '未找到目标账号的有效授权凭证，请先完成登录授权', statusCode: 401 };
+    }
+
+    const resolvedEmail = (options?.email || targetEmail || targetAccount?.email || this.getActiveEmail() || '').toLowerCase();
+    const expiryTime = tokenData?.token?.expiry ? new Date(tokenData.token.expiry).getTime() : 0;
+    const isExpired = !expiryTime || isNaN(expiryTime) || Date.now() >= expiryTime - 60_000;
+    if (!isTestInjected && isExpired && tokenData?.token?.refresh_token) {
+      tokenData = await this.refreshAccessToken(tokenData);
+      if (targetAccount) targetAccount.tokenData = tokenData;
+    }
+
+    let token = String(tokenData?.token?.access_token || '');
+    if (!token) {
+      return { ok: false, error: '账号授权 Token 无效或已失效，请重新授权', statusCode: 401 };
+    }
+
+    let projectId = options?.projectId ?? targetAccount?.projectId ?? '';
+    const buildHeaders = (bearer: string): Record<string, string> => ({
+      Authorization: `Bearer ${bearer}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'antigravity/1.5.18',
+    });
+
+    if (!projectId && !isTestInjected) {
+      try {
+        const resAssist = await fetchFn('https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist', {
+          method: 'POST',
+          headers: buildHeaders(token),
+          body: JSON.stringify({ metadata: { ideType: 'ANTIGRAVITY' } }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (resAssist.ok) {
+          const d1: any = await resAssist.json().catch(() => null);
+          if (d1?.cloudaicompanionProject) {
+            projectId = String(d1.cloudaicompanionProject);
+            if (targetAccount) targetAccount.projectId = projectId;
+          }
+        }
+      } catch (_) {}
+    }
+
+    const requestBody = JSON.stringify({
+      ...(projectId ? { project: projectId } : {}),
+      resetId: cleanResetId,
+      requestId: crypto.randomUUID(),
+    });
+
+    let lastStatus = 502;
+    let lastError = '请求 Google 重置卡接口失败';
+    let claimResponseData: any = null;
+    let claimSucceeded = false;
+
+    for (const host of CLOUDCODE_SUMMARY_HOSTS) {
+      try {
+        let res = await fetchFn(`https://${host}/v1internal:claimBankedQuotaReset`, {
+          method: 'POST',
+          headers: buildHeaders(token),
+          body: requestBody,
+          signal: AbortSignal.timeout(12000),
+        });
+
+        if (res.status === 401 && !isTestInjected && tokenData?.token?.refresh_token) {
+          tokenData = await this.refreshAccessToken(tokenData);
+          const nextToken = String(tokenData?.token?.access_token || '');
+          if (nextToken) {
+            token = nextToken;
+            if (targetAccount) targetAccount.tokenData = tokenData;
+            res = await fetchFn(`https://${host}/v1internal:claimBankedQuotaReset`, {
+              method: 'POST',
+              headers: buildHeaders(token),
+              body: requestBody,
+              signal: AbortSignal.timeout(12000),
+            });
+          }
+        }
+
+        if (res.ok) {
+          claimResponseData = await res.json().catch(() => ({}));
+          claimSucceeded = true;
+          break;
+        }
+
+        lastStatus = res.status;
+        const errJson: any = await res.json().catch(() => null);
+        lastError = errJson?.error?.message || errJson?.message || `HTTP ${res.status}`;
+        // 明确业务拒绝（如未达到阈值 / 不可领取 / 凭证无权），直接返回上游错误，不继续尝试备用域名
+        if (res.status !== 404 && res.status < 500) {
+          return { ok: false, error: lastError, statusCode: res.status };
+        }
+      } catch (err: any) {
+        lastError = err?.message || '网络连接异常';
+      }
+    }
+
+    if (!claimSucceeded) {
+      return { ok: false, error: lastError, statusCode: lastStatus };
+    }
+
+    if (resolvedEmail) {
+      this.accountQuotaSnapshots.delete(resolvedEmail);
+    }
+    this.cachedQuotaSnapshot = null;
+    this.quotaCacheTime = 0;
+
+    if (!isTestInjected) {
+      if (targetAccount) {
+        this.saveAccounts(accounts);
+      }
+      const refreshedSnapshot = await this.fetchLiveQuotaSummary(true, targetEmail || resolvedEmail || undefined);
+      return {
+        ok: true,
+        message: '重置卡已生效，实时配额已刷新',
+        quotaSnapshot: refreshedSnapshot,
+      };
+    }
+
+    const summaryPayload = claimResponseData?.quotaSummary ?? claimResponseData?.quota_summary ?? claimResponseData;
+    const bankedResets = parseBankedResets(summaryPayload);
+    return {
+      ok: true,
+      message: '重置卡已生效，实时配额已刷新',
+      quotaSnapshot: summaryPayload
+        ? {
+            percent: 100,
+            resetsIn: '随时可用',
+            weeklyPercent: 100,
+            weeklyResetIn: '随时可用',
+            accountEmail: resolvedEmail,
+            bankedResets,
+            updatedAt: Date.now(),
+          } as any
+        : null,
+    };
   }
 
   private cleanupLoginSession(id: string): void {

@@ -300,6 +300,19 @@ export type ModelQuotaItem = {
   status: 'healthy' | 'warning' | 'danger';
 };
 
+/** Antigravity 账号持有的可累积配额重置卡（Banked Reset）信息。 */
+export type AntigravityBankedReset = {
+  resetId: string;
+  displayLabel: string;
+  remainingCount: number;
+  expireTime: string | null;
+  expiresIn: string;
+  claimable: boolean;
+  ineligibleReason?: string;
+  ineligibleReasonText?: string;
+  bucketIds: string[];
+};
+
 export type AntigravityQuotaSnapshot = {
   gemini5h?: AntigravityQuotaPool;
   geminiWeekly?: AntigravityQuotaPool;
@@ -325,6 +338,7 @@ export type AntigravityQuotaSnapshot = {
   policyNote?: string;
   projectId?: string;
   models?: ModelQuotaItem[];
+  bankedResets?: AntigravityBankedReset[];
   metrics?: {
     totalConversations?: number;
     totalTurns?: number;

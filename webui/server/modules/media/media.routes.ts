@@ -17,8 +17,14 @@ const MIME_TYPES: Record<string, string> = {
   '.htm': 'text/html; charset=utf-8',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/x-m4v',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
 };
 
 const BLOCKED_PATTERNS = [
@@ -91,7 +97,7 @@ const handleMediaRequest: express.RequestHandler = (req, res) => {
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', stats.size);
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -101,6 +107,34 @@ const handleMediaRequest: express.RequestHandler = (req, res) => {
       res.removeHeader('X-Frame-Options');
     }
 
+    const rangeHeader = req.headers.range;
+    if (rangeHeader && stats.size > 0) {
+      const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+      if (!match) {
+        res.setHeader('Content-Range', `bytes */${stats.size}`);
+        return res.status(416).end();
+      }
+      const start = match[1] ? Number.parseInt(match[1], 10) : 0;
+      const end = match[2] ? Math.min(Number.parseInt(match[2], 10), stats.size - 1) : stats.size - 1;
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stats.size) {
+        res.setHeader('Content-Range', `bytes */${stats.size}`);
+        return res.status(416).end();
+      }
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${stats.size}`);
+      res.setHeader('Content-Length', end - start + 1);
+      const stream = fs.createReadStream(resolvedPath, { start, end });
+      stream.pipe(res);
+      stream.on('error', (streamErr) => {
+        console.error('[MediaRoute] Range stream error:', streamErr);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Error streaming media' });
+        }
+      });
+      return;
+    }
+
+    res.setHeader('Content-Length', stats.size);
     const stream = fs.createReadStream(resolvedPath);
     stream.pipe(res);
     stream.on('error', (streamErr) => {
